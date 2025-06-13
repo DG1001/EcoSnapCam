@@ -161,32 +161,59 @@ void takeAndSendPhoto() {
 
   // Foto per HTTP POST senden
   if (WiFi.status() == WL_CONNECTED) {
-    WiFiClientSecure *client = new WiFiClientSecure;
-    if(client) {
-      client->setInsecure(); // Zertifikatsprüfung deaktivieren (nur für Entwicklung!)
-    }
-  
-    HTTPClient http;
-    http.begin(*client, serverURL);
-    http.addHeader("Content-Type", "image/jpeg");
+    // Prüfe, ob die serverURL mit "https://" beginnt
+    if (String(serverURL).startsWith("https://")) {
+      WiFiClientSecure *client = new WiFiClientSecure;
+      if(client) {
+        client->setInsecure(); // Zertifikatsprüfung deaktivieren (nur für Entwicklung!)
+      }
     
-    // Optional: Weitere Header hinzufügen
-    http.addHeader("X-Device-ID", "ESP32-CAM-001");
-    http.addHeader("X-Timestamp", String(millis()));
-    
-    Serial.println("Sende Foto...");
-    int httpResponseCode = http.POST(fb->buf, fb->len);
-    
-    if (httpResponseCode > 0) {
-      String response = http.getString();
-      Serial.printf("HTTP Response: %d\n", httpResponseCode);
-      Serial.println("Server Antwort: " + response);
+      HTTPClient http;
+      http.begin(*client, serverURL);
+      http.addHeader("Content-Type", "image/jpeg");
+      
+      // Optional: Weitere Header hinzufügen
+      http.addHeader("X-Device-ID", "ESP32-CAM-001");
+      http.addHeader("X-Timestamp", String(millis()));
+      
+      Serial.println("Sende Foto...");
+      int httpResponseCode = http.POST(fb->buf, fb->len);
+      
+      if (httpResponseCode > 0) {
+        String response = http.getString();
+        Serial.printf("HTTP Response: %d\n", httpResponseCode);
+        Serial.println("Server Antwort: " + response);
+      } else {
+        Serial.printf("HTTP Fehler: %d\n", httpResponseCode);
+      }
+      
+      http.end();
+      delete client;
     } else {
-      Serial.printf("HTTP Fehler: %d\n", httpResponseCode);
+      // HTTP Verbindung ohne Sicherheit
+      WiFiClient *client = new WiFiClient;
+      HTTPClient http;
+      http.begin(*client, serverURL);
+      http.addHeader("Content-Type", "image/jpeg");
+      
+      // Optional: Weitere Header hinzufügen
+      http.addHeader("X-Device-ID", "ESP32-CAM-001");
+      http.addHeader("X-Timestamp", String(millis()));
+      
+      Serial.println("Sende Foto...");
+      int httpResponseCode = http.POST(fb->buf, fb->len);
+      
+      if (httpResponseCode > 0) {
+        String response = http.getString();
+        Serial.printf("HTTP Response: %d\n", httpResponseCode);
+        Serial.println("Server Antwort: " + response);
+      } else {
+        Serial.printf("HTTP Fehler: %d\n", httpResponseCode);
+      }
+      
+      http.end();
+      delete client;
     }
-    
-    http.end();
-    delete client;
   }
 
   // Foto Puffer freigeben
