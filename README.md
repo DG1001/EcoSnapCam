@@ -35,7 +35,7 @@ Die wichtigsten Einstellungen in `config.h`:
 ```cpp
 const char* ssid = "WLAN_NAME";
 const char* password = "WLAN_PASSWORT";
-const char* serverURL = "http://dein.server.de/upload";
+const char* serverURL = "https://dein.server.de/upload"; // HTTPS mit deaktivierter Zertifikatsprüfung
 ```
 
 ## Lizenz

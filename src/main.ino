@@ -1,6 +1,7 @@
 #include "esp_camera.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include "esp_sleep.h"
 #include "driver/rtc_io.h"
 
@@ -160,8 +161,13 @@ void takeAndSendPhoto() {
 
   // Foto per HTTP POST senden
   if (WiFi.status() == WL_CONNECTED) {
+    WiFiClientSecure *client = new WiFiClientSecure;
+    if(client) {
+      client->setInsecure(); // Zertifikatsprüfung deaktivieren (nur für Entwicklung!)
+    }
+  
     HTTPClient http;
-    http.begin(serverURL);
+    http.begin(*client, serverURL);
     http.addHeader("Content-Type", "image/jpeg");
     
     // Optional: Weitere Header hinzufügen
@@ -180,6 +186,7 @@ void takeAndSendPhoto() {
     }
     
     http.end();
+    delete client;
   }
 
   // Foto Puffer freigeben
