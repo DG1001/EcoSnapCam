@@ -4,12 +4,7 @@
 #include "esp_sleep.h"
 #include "driver/rtc_io.h"
 
-// WLAN Konfiguration
-const char* ssid = "DEIN_WLAN_NAME";
-const char* password = "DEIN_WLAN_PASSWORT";
-
-// Server URL für Bildupload (anpassen nach Bedarf)
-const char* serverURL = "http://dein-server.com/upload";
+#include "config.h"
 
 // ESP32-CAM AI-Thinker Pin Definition
 #define PWDN_GPIO_NUM     32

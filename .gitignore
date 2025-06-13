@@ -1,6 +1,4 @@
 .pio/
 .vscode/
-.vscode/
-.vscode/
-.vscode/
 .aider*
+src/config.h
