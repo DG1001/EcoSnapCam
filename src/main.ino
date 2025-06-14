@@ -16,6 +16,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <esp_now.h> // Für ESP-NOW
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include "esp_camera.h"
@@ -42,6 +43,35 @@ constexpr uint64_t SLEEP_USEC = 5ULL * 60ULL * 1000000ULL;
 static constexpr gpio_num_t PIR_PIN  = GPIO_NUM_13;
 // Batteriespannung (ADC2_CH6 an GPIO14)
 static constexpr int        VBAT_PIN = 14;
+
+#if USE_ESP_NOW
+// ESP-NOW spezifische Definitionen
+esp_now_peer_info_t peerInfo;
+volatile bool espNowSendSuccess = false; // Wird vom Callback gesetzt
+
+// Maximale Datenmenge pro ESP-NOW Chunk (250 Bytes max ESP-NOW Payload - Größe unseres Headers)
+// Unser Header: image_id (4), total_size (4), chunk_index (2), total_chunks (2), data_len (1), vbat_mv_high (1), vbat_mv_low (1) = 15 Bytes
+#define ESP_NOW_MAX_DATA_PER_CHUNK (250 - 15) 
+
+typedef struct __attribute__((packed)) esp_now_image_chunk_t {
+    uint32_t image_id;     // Eindeutige ID für das Bild (z.B. millis() beim Start des Sendevorgangs)
+    uint32_t total_size;   // Gesamtgröße des Bildes in Bytes
+    uint16_t chunk_index;  // Aktueller Chunk-Index (0-basiert)
+    uint16_t total_chunks; // Gesamtzahl der Chunks für dieses Bild
+    uint8_t  data_len;     // Länge der Bilddaten in diesem Chunk (kann beim letzten Chunk kleiner sein)
+    uint8_t  vbat_mv_high; // Batteriespannung in mV (oberes Byte)
+    uint8_t  vbat_mv_low;  // Batteriespannung in mV (unteres Byte)
+    uint8_t  data[ESP_NOW_MAX_DATA_PER_CHUNK]; // Die eigentlichen Bilddaten des Chunks
+} esp_now_image_chunk_t;
+
+// Callback-Funktion, die nach dem Senden von ESP-NOW Daten aufgerufen wird
+static void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+  Serial.printf("[ESP-NOW] Sendestatus an %02X:%02X:%02X:%02X:%02X:%02X: %s\n",
+                mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5],
+                status == ESP_NOW_SEND_SUCCESS ? "Erfolg" : "Fehler");
+  espNowSendSuccess = (status == ESP_NOW_SEND_SUCCESS);
+}
+#endif
 
 // ───────── Kamera‑Pinout (AI‑Thinker ESP32‑CAM) ─────────
 #define PWDN_GPIO_NUM 32
@@ -109,6 +139,92 @@ static bool wifiConnect() {
   return WiFi.status() == WL_CONNECTED;
 }
 
+#if USE_ESP_NOW
+static bool initEspNow() {
+  WiFi.mode(WIFI_STA); // ESP-NOW benötigt den STA-Modus
+  // Optional: WiFi.disconnect(); // Um sicherzustellen, dass keine alte Verbindung besteht.
+  // Der Kanal wird in peerInfo.channel gesetzt, ESP-NOW kümmert sich darum.
+  // Es ist nicht notwendig, WiFi.begin() für den ESP-NOW Client-Modus aufzurufen, wenn keine AP-Verbindung benötigt wird.
+  // Wenn ESP_NOW_CHANNEL 0 ist, wird der aktuelle STA-Kanal verwendet.
+  // Wenn ein spezifischer Kanal gesetzt ist, muss der ESP32 ggf. darauf wechseln.
+  // esp_wifi_set_channel(ESP_NOW_CHANNEL, WIFI_SECOND_CHAN_NONE); // Falls fester Kanal benötigt wird und nicht 0
+
+  if (esp_now_init() != ESP_OK) {
+    Serial.println(F("[ESP-NOW] Fehler bei der Initialisierung"));
+    return false;
+  }
+  esp_now_register_send_cb(OnDataSent);
+
+  memcpy(peerInfo.peer_addr, espNowReceiverMac, 6);
+  peerInfo.channel = ESP_NOW_CHANNEL; 
+  peerInfo.encrypt = false; // Keine Verschlüsselung für dieses Beispiel
+  // peerInfo.ifidx = WIFI_IF_STA; // Standardmäßig WIFI_IF_STA
+
+  if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+    Serial.println(F("[ESP-NOW] Fehler beim Hinzufügen des Peers"));
+    esp_now_deinit(); // Aufräumen
+    return false;
+  }
+  Serial.println(F("[ESP-NOW] Initialisierung erfolgreich, Peer hinzugefügt."));
+  return true;
+}
+
+static bool sendJpegEspNow(uint8_t* buf, size_t len, uint32_t imageId, uint16_t v_bat_mv) {
+  if (len == 0) {
+    Serial.println(F("[ESP-NOW] Keine Daten zum Senden."));
+    return false;
+  }
+
+  esp_now_image_chunk_t chunk_message; // Nachricht, die gesendet wird
+  chunk_message.image_id = imageId;
+  chunk_message.total_size = len;
+  chunk_message.vbat_mv_high = (v_bat_mv >> 8) & 0xFF;
+  chunk_message.vbat_mv_low = v_bat_mv & 0xFF;
+
+  uint16_t totalChunks = (len + ESP_NOW_MAX_DATA_PER_CHUNK - 1) / ESP_NOW_MAX_DATA_PER_CHUNK;
+  chunk_message.total_chunks = totalChunks;
+
+  Serial.printf("[ESP-NOW] Sende Bild (ID: %u, Größe: %u Bytes, Chunks: %u, VBat: %umV)\n", imageId, len, totalChunks, v_bat_mv);
+
+  for (uint16_t i = 0; i < totalChunks; ++i) {
+    chunk_message.chunk_index = i;
+    size_t offset = i * ESP_NOW_MAX_DATA_PER_CHUNK;
+    size_t currentChunkDataSize = (i == totalChunks - 1) ? (len - offset) : ESP_NOW_MAX_DATA_PER_CHUNK;
+    chunk_message.data_len = currentChunkDataSize;
+    memcpy(chunk_message.data, buf + offset, currentChunkDataSize);
+
+    espNowSendSuccess = false; // Zurücksetzen vor dem Senden für den Callback
+    
+    // Die Größe der zu sendenden Nachricht ist der Header-Teil + die aktuellen Daten
+    // offsetof gibt den Offset des 'data' Feldes zurück.
+    size_t messageSize = offsetof(esp_now_image_chunk_t, data) + currentChunkDataSize;
+
+    esp_err_t result = esp_now_send(espNowReceiverMac, (uint8_t*)&chunk_message, messageSize);
+    
+    if (result == ESP_OK) {
+      Serial.printf("[ESP-NOW] Chunk %u/%u (Daten: %u Bytes, Gesamtmsg: %u Bytes) an Senden-Warteschlange übergeben. Warte auf Bestätigung...\n", 
+                    i + 1, totalChunks, currentChunkDataSize, messageSize);
+      
+      unsigned long startTime = millis();
+      while (!espNowSendSuccess && (millis() - startTime < 2000)) { // 2 Sekunden Timeout pro Chunk für Callback
+        delay(10); // Kurze Pause, um anderen Tasks (wie dem WiFi-Treiber) Zeit zu geben
+      }
+
+      if (!espNowSendSuccess) {
+        Serial.println(F("[ESP-NOW] Fehler: Sende-Callback nicht rechtzeitig oder fehlgeschlagen. Abbruch."));
+        return false; 
+      }
+      Serial.printf("[ESP-NOW] Chunk %u/%u erfolgreich gesendet.\n", i + 1, totalChunks);
+    } else {
+      Serial.printf("[ESP-NOW] Fehler beim Senden von Chunk %u/%u: %s\n", i + 1, totalChunks, esp_err_to_name(result));
+      return false; 
+    }
+  }
+  Serial.println(F("[ESP-NOW] Alle Chunks erfolgreich gesendet."));
+  return true;
+}
+#endif
+
 // JPEG‑Upload – HTTP oder HTTPS (HTTP/1.0, fester Content‑Length)
 static bool sendJpeg(uint8_t* buf, size_t len, const char* url) {
   HTTPClient http;
@@ -164,22 +280,51 @@ void setup() {
     goDeepSleep();
   }
 
+  bool uploadSuccess = false;
+  uint32_t imageIdForEspNow = millis(); // Eindeutige ID für dieses Bild bei ESP-NOW
+
+#if USE_ESP_NOW
+  Serial.println(F("[Main] ESP-NOW Upload ausgewählt."));
+  if (!initEspNow()) {
+    Serial.println(F("[Main] ESP-NOW Init fail – Sleep"));
+    // WiFi.mode(WIFI_OFF) wird unten generell aufgerufen
+  } else {
+    if (camera_fb_t* fb = esp_camera_fb_get()) {
+      uploadSuccess = sendJpegEspNow(fb->buf, fb->len, imageIdForEspNow, v_mV);
+      esp_camera_fb_return(fb);
+    } else {
+      Serial.println(F("Foto capture fehlgeschlagen"));
+    }
+    esp_now_deinit(); // ESP-NOW nach Gebrauch deaktivieren
+    Serial.println(F("[ESP-NOW] Deinitialisiert."));
+  }
+#else
+  Serial.println(F("[Main] HTTP/S Upload ausgewählt."));
   if (!wifiConnect()) {
     Serial.println(F("WiFi fail – Sleep"));
-    goDeepSleep();
-  }
-
-  if (camera_fb_t* fb = esp_camera_fb_get()) {
-      char url[256]; // Puffer für die URL, Größe ggf. anpassen
-      snprintf(url, sizeof(url), "%s?vbat=%u", serverURL, v_mV);
-      sendJpeg(fb->buf, fb->len, url);
-      esp_camera_fb_return(fb);
+    // WiFi.mode(WIFI_OFF) wird unten generell aufgerufen
   } else {
-      Serial.println(F("Foto capture fehlgeschlagen"));
+    if (camera_fb_t* fb = esp_camera_fb_get()) {
+        char url_buffer[256]; // Puffer für die URL, Größe ggf. anpassen
+        snprintf(url_buffer, sizeof(url_buffer), "%s?vbat=%u", serverURL, v_mV);
+        uploadSuccess = sendJpeg(fb->buf, fb->len, url_buffer);
+        esp_camera_fb_return(fb);
+    } else {
+        Serial.println(F("Foto capture fehlgeschlagen"));
+    }
+    WiFi.disconnect(true); // WLAN trennen nach HTTP Upload
+    Serial.println(F("WiFi getrennt."));
   }
+#endif
 
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
+  if (uploadSuccess) {
+    Serial.println(F("Bild-Upload erfolgreich abgeschlossen."));
+  } else {
+    Serial.println(F("Bild-Upload fehlgeschlagen."));
+  }
+  
+  WiFi.mode(WIFI_OFF); // WLAN Modul komplett ausschalten vor Deep Sleep
+  Serial.println(F("WiFi Modul AUS."));
 
   goDeepSleep();
 }
