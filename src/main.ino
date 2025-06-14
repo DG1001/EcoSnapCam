@@ -125,9 +125,10 @@ static bool sendJpeg(uint8_t* buf, size_t len, const char* url) {
   http.addHeader("Content-Type", "image/jpeg");
   int rc = http.POST(buf, len);
   Serial.printf("HTTP rc=%d (%s)\n", rc, http.errorToString(rc).c_str());
-  if (rc > 0) Serial.println(http.getString());
+  if (rc > 0) Serial.println(http.getString()); // Server-Antwort ausgeben (nützlich für Debugging)
   http.end();
-  return rc > 0 && rc < 400;
+  // Nur HTTP-Statuscodes 200-299 als Erfolg werten
+  return rc >= 200 && rc < 300;
 }
 
 static void goDeepSleep() {
