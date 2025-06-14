@@ -163,8 +163,9 @@ void setup() {
   }
 
   if (camera_fb_t* fb = esp_camera_fb_get()) {
-      String url = String(serverURL) + "?vbat=" + v_mV;
-      sendJpeg(fb->buf, fb->len, url.c_str());
+      char url[256]; // Puffer für die URL, Größe ggf. anpassen
+      snprintf(url, sizeof(url), "%s?vbat=%u", serverURL, v_mV);
+      sendJpeg(fb->buf, fb->len, url);
       esp_camera_fb_return(fb);
   } else {
       Serial.println(F("Foto capture fehlgeschlagen"));
