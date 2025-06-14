@@ -71,9 +71,15 @@ static void printWakeReason() {
 }
 
 static float readVBat() {
-  analogSetPinAttenuation(VBAT_PIN, ADC_11db);  // 0–3.6 V
-  uint16_t raw = analogRead(VBAT_PIN);          // 0–4095
-  return raw * 3.3f / 4095.0f;                  // V
+  // Annahme: Spannungsteiler mit R1 = 100kOhm, R2 = 100kOhm.
+  // V_adc = V_bat * (R2 / (R1 + R2)) = V_bat / 2.
+  // Daher V_bat = V_adc * 2.
+  // Die Referenzspannung des ADC wird hier mit 3.3V angenommen.
+  // Für höhere Genauigkeit könnte die ADC-Kalibrierung verwendet werden.
+  analogSetPinAttenuation(VBAT_PIN, ADC_11db);  // Messbereich ca. 0–3.6 V am ADC-Pin
+  uint16_t raw = analogRead(VBAT_PIN);          // Rohwert 0–4095
+  float v_adc = raw * 3.3f / 4095.0f;           // Spannung am ADC-Pin
+  return v_adc * 2.0f;                          // Tatsächliche Batteriespannung
 }
 
 static bool initCamera() {
