@@ -153,7 +153,7 @@ void setup() {
 
   // TJpg_Decoder konfigurieren
   TJpgDec.setJpgScale(1);      // Keine Skalierung
-  TJpgDec.setSwapBytes(false); // Testweise Byte-Reihenfolge ändern
+  TJpgDec.setSwapBytes(true);  // Byte-Reihenfolge für Farben korrigieren (oft nötig)
   TJpgDec.setCallback(tft_output);
 
   // ESP-NOW initialisieren
