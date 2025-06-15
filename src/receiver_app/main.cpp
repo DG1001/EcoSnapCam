@@ -2,9 +2,7 @@
 #include <esp_now.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
-// User_Setup.h muss vor TFT_eSPI.h eingebunden werden, 
-// damit die Makros wie TFT_WIDTH korrekt definiert sind.
-#include "User_Setup.h" 
+// User_Setup.h wird nicht mehr benötigt, Konfiguration erfolgt über platformio.ini build_flags
 #include <TFT_eSPI.h>
 #include <TJpg_Decoder.h>
 
