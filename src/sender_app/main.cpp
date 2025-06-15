@@ -112,7 +112,7 @@ static bool initCamera() {
   cfg.pin_sscb_sda = SIOD_GPIO_NUM; cfg.pin_sscb_scl = SIOC_GPIO_NUM;
   cfg.pin_pwdn = PWDN_GPIO_NUM; cfg.pin_reset = RESET_GPIO_NUM;
   cfg.xclk_freq_hz = 20000000;          // 20 MHz
-  cfg.frame_size   = FRAMESIZE_QVGA;
+  cfg.frame_size   = FRAMESIZE_SVGA;
   cfg.pixel_format = PIXFORMAT_JPEG;
   cfg.jpeg_quality = 10;                // 0–63 (niedriger = besser)
   cfg.fb_count     = 1;
