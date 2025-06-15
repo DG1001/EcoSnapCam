@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <esp_now.h>
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include <TFT_eSPI.h>
 #include <TJpg_Decoder.h>
 
