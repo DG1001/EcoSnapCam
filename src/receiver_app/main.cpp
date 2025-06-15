@@ -148,7 +148,7 @@ void setup() {
   // Hintergrundbeleuchtung einschalten (Pin ist in User_Setup.h als TFT_BL definiert)
   #ifdef TFT_BL
     pinMode(TFT_BL, OUTPUT);
-    digitalWrite(TFT_BL, LOW); // Testweise auf LOW ändern, falls die Logik invertiert ist
+    digitalWrite(TFT_BL, HIGH); // Zurück auf HIGH, da LOW den Bildschirm schwarz macht
   #endif
 
   // TJpg_Decoder konfigurieren
