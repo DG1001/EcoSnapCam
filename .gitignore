@@ -1,5 +1,5 @@
 .pio/
 .vscode/
 .aider*
-sender_app/src/config.h
-receiver_app/src/config.h
+src/sender_app/config.h
+src/receiver_app/config.h
