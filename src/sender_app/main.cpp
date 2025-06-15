@@ -246,7 +246,9 @@ static bool sendJpeg(uint8_t* buf, size_t len, const char* url) {
   http.addHeader("Content-Type", "image/jpeg");
   http.setTimeout(10000); // Timeout auf 10 Sekunden setzen
   Serial.printf("Sende %u Bytes an: %s\n", len, url); // Zusätzliche Debug-Ausgabe
+  Serial.printf("[HTTP] Freier Heap vor POST: %u Bytes\n", ESP.getFreeHeap());
   int rc = http.POST(buf, len);
+  Serial.printf("[HTTP] Freier Heap nach POST: %u Bytes\n", ESP.getFreeHeap());
   Serial.printf("HTTP rc=%d (%s)\n", rc, http.errorToString(rc).c_str());
   if (rc > 0) Serial.println(http.getString()); // Server-Antwort ausgeben (nützlich für Debugging)
   http.end();
