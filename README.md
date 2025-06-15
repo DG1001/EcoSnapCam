@@ -33,12 +33,20 @@ Unterstützt Bildübertragung via HTTP/HTTPS oder ESP-NOW an einen dedizierten E
 1.  Repository klonen.
 2.  **Sender Setup:**
     a.  Kopieren Sie `src/sender_app/config_sample.h` zu `src/sender_app/config.h`.
-    b.  Passen Sie `src/sender_app/config.h` mit Ihren WLAN- und Server-Daten (für HTTP/S-Upload) oder ESP-NOW Einstellungen an.
+    b.  Passen Sie `src/sender_app/config.h` mit Ihren WLAN-Daten an. Für den HTTP-Upload passen Sie die `serverURL` an die Adresse Ihres PHP-Servers an (siehe Punkt 3).
     c.  Mit PlatformIO auf das ESP32-CAM Modul flashen (Umgebung `ecosnapcam_sender`):
         ```bash
         pio run -e ecosnapcam_sender -t upload
         ```
-3.  **Empfänger Setup (optional, bei Verwendung von ESP-NOW):**
+3.  **Server Setup (für HTTP-Upload):**
+    a.  Das Projekt enthält ein PHP-Skript (`upload.php`) zum Empfangen und Anzeigen der Bilder.
+    b.  Um dieses Skript einfach bereitzustellen, können Sie einen Docker-Container verwenden. Kopieren Sie `upload.php` in ein Verzeichnis (z.B. `my_php_server`) und führen Sie folgenden Befehl im übergeordneten Verzeichnis aus (stellen Sie sicher, dass `upload.php` sich in `my_php_server/upload.php` befindet):
+        ```bash
+        docker run -d -p 8080:80 --name ecosnapcam-server -v ./my_php_server:/var/www/html php:8-apache
+        ```
+        Die Bildergalerie ist dann unter `http://localhost:8080/upload.php` erreichbar. Der Upload-Endpunkt für den ESP32-Sender ist `http://<IP_DES_DOCKER_HOSTS>:8080/upload.php` (ersetzen Sie `<IP_DES_DOCKER_HOSTS>` mit der IP-Adresse des Rechners, auf dem Docker läuft, wenn Sie von einem anderen Gerät im Netzwerk darauf zugreifen).
+    c.  Passen Sie die `serverURL` in `src/sender_app/config.h` entsprechend an.
+4.  **Empfänger Setup (optional, bei Verwendung von ESP-NOW):**
     a.  Die Konfiguration des Empfängers (Display-Pins, ESP-NOW Kanal) erfolgt direkt in `platformio.ini` (für das Display) und `src/receiver_app/main.cpp` (für den ESP-NOW Kanal).
     b.  Stellen Sie sicher, dass der `ESP_NOW_RECEIVER_CHANNEL` in `src/receiver_app/main.cpp` mit dem `ESP_NOW_CHANNEL` in der `config.h` des Senders übereinstimmt.
     c.  Mit PlatformIO auf das ESP32-Empfängerboard flashen (Umgebung `espnow_receiver`):
