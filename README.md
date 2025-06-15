@@ -20,6 +20,8 @@ Unterstützt Bildübertragung via HTTP/HTTPS oder ESP-NOW an einen dedizierten E
 - ESP32-CAM Modul (AI-Thinker)
 - FTDI Programmer oder ähnliches für USB-Serial
 - Stromversorgung (z.B. Batterie oder Solar)
+- Optional: PIR-Sensor für bewegungsaktivierte Aufnahmen (Standard: GPIO13)
+- Optional: Anschluss für Batteriespannungsmessung (Standard: GPIO14)
 
 **Empfänger (optional, bei Verwendung von ESP-NOW):**
 - ESP32 Entwicklungsboard (z.B. ESP32 Dev Kit C, Wemos D1 Mini ESP32)
@@ -68,6 +70,11 @@ Stellen Sie sicher, dass `USE_ESP_NOW` auf `true` gesetzt ist.
 // ESP-NOW aktivieren
 #define USE_ESP_NOW true
 
+// Pin-Definitionen für optionale Hardware (relevant für den Sender)
+// #define PIR_PIN GPIO_NUM_13 // Standardmäßig in main.cpp definiert, hier zur Info
+// #define VBAT_PIN 14         // Standardmäßig in main.cpp definiert, hier zur Info
+
+
 #if USE_ESP_NOW
 // MAC-Adresse des ESP-NOW Empfänger-Boards
 // {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF} für Broadcast an alle Geräte auf dem Kanal.
@@ -79,6 +86,11 @@ static uint8_t espNowReceiverMac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 #endif
 ```
 Die Konfiguration des **Empfängers** (Display-Typ, Pins) erfolgt über die `build_flags` in der `platformio.ini` für die `espnow_receiver`-Umgebung. Der ESP-NOW Empfangskanal ist in `src/receiver_app/main.cpp` definiert (`ESP_NOW_RECEIVER_CHANNEL`).
+
+### Hinweise zur Sender-Hardware
+
+-   **PIR-Sensor:** Der Sender-Code ist so konfiguriert, dass er auf ein Signal vom PIR-Sensor an `GPIO13` reagiert, um zusätzlich zum Timer-basierten Aufwachen eine Aufnahme auszulösen. Der Pin ist im Code (`src/sender_app/main.cpp`) als `PIR_PIN` definiert.
+-   **Batteriespannungsmessung:** Der Sender misst die Batteriespannung an `GPIO14` (im Code als `VBAT_PIN` definiert). Diese Information wird bei HTTP/S-Uploads als GET-Parameter (`?vbat=XXXX`) an die Server-URL angehängt und bei ESP-NOW-Uploads als Teil der Nachricht an den Empfänger gesendet und dort angezeigt. Stellen Sie sicher, dass Ihre Batterieschaltung für die Messung an diesem Pin geeignet ist (ggf. Spannungsteiler verwenden, falls die Batteriespannung die maximale Eingangsspannung des ADC übersteigt).
 
 ## Lizenz
 
