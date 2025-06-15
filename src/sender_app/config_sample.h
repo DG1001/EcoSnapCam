@@ -23,7 +23,7 @@ static uint8_t espNowReceiverMac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 // WLAN-Kanal für ESP-NOW (0 für automatisch/aktuellen Kanal, sonst 1-13)
 // Sender und Empfänger müssen auf demselben Kanal sein für zuverlässige Kommunikation.
 // Wenn der Empfänger auf einem festen Kanal lauscht, hier denselben Kanal eintragen.
-#define ESP_NOW_CHANNEL 0
+#define ESP_NOW_CHANNEL 1 // Fest auf Kanal 1 setzen, passend zum Empfänger
 #endif
 
 #endif // CONFIG_SAMPLE_H
