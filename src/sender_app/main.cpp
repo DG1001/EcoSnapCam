@@ -66,9 +66,9 @@ typedef struct __attribute__((packed)) esp_now_image_chunk_t {
 
 // Callback-Funktion, die nach dem Senden von ESP-NOW Daten aufgerufen wird
 static void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
-  Serial.printf("[ESP-NOW] Sendestatus an %02X:%02X:%02X:%02X:%02X:%02X: %s\n",
-                mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5],
-                status == ESP_NOW_SEND_SUCCESS ? "Erfolg" : "Fehler");
+  // Serial.printf("[ESP-NOW] Sendestatus an %02X:%02X:%02X:%02X:%02X:%02X: %s\n",
+  //               mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5],
+  //               status == ESP_NOW_SEND_SUCCESS ? "Erfolg" : "Fehler");
   espNowSendSuccess = (status == ESP_NOW_SEND_SUCCESS);
 }
 #endif
@@ -122,9 +122,9 @@ static bool initCamera() {
   cfg.pin_sscb_sda = SIOD_GPIO_NUM; cfg.pin_sscb_scl = SIOC_GPIO_NUM;
   cfg.pin_pwdn = PWDN_GPIO_NUM; cfg.pin_reset = RESET_GPIO_NUM;
   cfg.xclk_freq_hz = 20000000;          // 20 MHz
-  cfg.frame_size   = FRAMESIZE_SVGA;
+  cfg.frame_size   = FRAMESIZE_QVGA;
   cfg.pixel_format = PIXFORMAT_JPEG;
-  cfg.jpeg_quality = 40;                // 0–63 (niedriger = besser)
+  cfg.jpeg_quality = 10;                // 0–63 (niedriger = besser)
   cfg.fb_count     = 1;
   return esp_camera_init(&cfg) == ESP_OK;
 }
@@ -169,13 +169,24 @@ static bool initEspNow() {
   return true;
 }
 
+
+// ────────────────────────────────────────────────────────────────
+//  Korrigierte sendJpegEspNow Funktion
+//  Behebt ESP-NOW Buffer-Overflow Probleme
+// ────────────────────────────────────────────────────────────────
 static bool sendJpegEspNow(uint8_t* buf, size_t len, uint32_t imageId, uint16_t v_bat_mv) {
   if (len == 0) {
     Serial.println(F("[ESP-NOW] Keine Daten zum Senden."));
     return false;
   }
 
-  esp_now_image_chunk_t chunk_message; // Nachricht, die gesendet wird
+  // Bildgröße für ESP-NOW begrenzen (wegen 250-Byte Chunks)
+  if (len > 50000) {  // 50KB Limit für ESP-NOW
+    Serial.printf("[ESP-NOW] Bild zu groß für ESP-NOW: %u Bytes. Maximum: 50KB\n", len);
+    return false;
+  }
+
+  esp_now_image_chunk_t chunk_message;
   chunk_message.image_id = imageId;
   chunk_message.total_size = len;
   chunk_message.vbat_mv_high = (v_bat_mv >> 8) & 0xFF;
@@ -184,45 +195,52 @@ static bool sendJpegEspNow(uint8_t* buf, size_t len, uint32_t imageId, uint16_t 
   uint16_t totalChunks = (len + ESP_NOW_MAX_DATA_PER_CHUNK - 1) / ESP_NOW_MAX_DATA_PER_CHUNK;
   chunk_message.total_chunks = totalChunks;
 
-  Serial.printf("[ESP-NOW] Sende Bild (ID: %u, Größe: %u Bytes, Chunks: %u, VBat: %umV)\n", imageId, len, totalChunks, v_bat_mv);
+  Serial.printf("[ESP-NOW] Sende Bild (ID: %u, Größe: %u Bytes, Chunks: %u)\n", 
+                imageId, len, totalChunks);
 
   for (uint16_t i = 0; i < totalChunks; ++i) {
     chunk_message.chunk_index = i;
     size_t offset = i * ESP_NOW_MAX_DATA_PER_CHUNK;
-    size_t currentChunkDataSize = (i == totalChunks - 1) ? (len - offset) : ESP_NOW_MAX_DATA_PER_CHUNK;
+    size_t currentChunkDataSize = (i == totalChunks - 1) ? 
+                                  (len - offset) : ESP_NOW_MAX_DATA_PER_CHUNK;
     chunk_message.data_len = currentChunkDataSize;
     memcpy(chunk_message.data, buf + offset, currentChunkDataSize);
 
-    espNowSendSuccess = false; // Zurücksetzen vor dem Senden für den Callback
-    
-    // Die Größe der zu sendenden Nachricht ist der Header-Teil + die aktuellen Daten
-    // offsetof gibt den Offset des 'data' Feldes zurück.
-    size_t messageSize = offsetof(esp_now_image_chunk_t, data) + currentChunkDataSize;
+    espNowSendSuccess = false;
 
+    size_t messageSize = offsetof(esp_now_image_chunk_t, data) + currentChunkDataSize;
     esp_err_t result = esp_now_send(espNowReceiverMac, (uint8_t*)&chunk_message, messageSize);
-    
+
     if (result == ESP_OK) {
-      Serial.printf("[ESP-NOW] Chunk %u/%u (Daten: %u Bytes, Gesamtmsg: %u Bytes) an Senden-Warteschlange übergeben. Warte auf Bestätigung...\n", 
-                    i + 1, totalChunks, currentChunkDataSize, messageSize);
-      
+      // Warte auf Callback mit Timeout
       unsigned long startTime = millis();
-      while (!espNowSendSuccess && (millis() - startTime < 2000)) { // 2 Sekunden Timeout pro Chunk für Callback
-        delay(10); // Kurze Pause, um anderen Tasks (wie dem WiFi-Treiber) Zeit zu geben
+      while (!espNowSendSuccess && (millis() - startTime < 3000)) {
+        delay(10);
       }
 
       if (!espNowSendSuccess) {
-        Serial.println(F("[ESP-NOW] Fehler: Sende-Callback nicht rechtzeitig oder fehlgeschlagen. Abbruch."));
+        Serial.printf("[ESP-NOW] Timeout bei Chunk %u/%u\n", i + 1, totalChunks);
         return false; 
       }
-      Serial.printf("[ESP-NOW] Chunk %u/%u erfolgreich gesendet.\n", i + 1, totalChunks);
+
+      // KRITISCH: Pause zwischen Chunks um Buffer-Overflow zu vermeiden
+      if (i < totalChunks - 1) {  // Nicht nach dem letzten Chunk
+        delay(20);  // 20ms Pause - verhindert ESP_ERR_ESPNOW_NO_MEM
+      }
+
+      // Serial.printf("[ESP-NOW] Chunk %u/%u gesendet\n", i + 1, totalChunks);
     } else {
-      Serial.printf("[ESP-NOW] Fehler beim Senden von Chunk %u/%u: %s\n", i + 1, totalChunks, esp_err_to_name(result));
+      Serial.printf("[ESP-NOW] Fehler bei Chunk %u: %s\n", 
+                    i + 1, esp_err_to_name(result));
       return false; 
     }
   }
-  Serial.println(F("[ESP-NOW] Alle Chunks erfolgreich gesendet."));
+
+  Serial.println(F("[ESP-NOW] Übertragung komplett"));
   return true;
 }
+
+
 #endif
 
 // JPEG‑Upload – HTTP oder HTTPS (HTTP/1.0, fester Content‑Length)
