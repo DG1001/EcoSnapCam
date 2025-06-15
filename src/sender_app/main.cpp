@@ -18,7 +18,7 @@
 #include <WiFi.h>
 #include <esp_now.h> // Für ESP-NOW
 #include <HTTPClient.h>
-#include <WiFiClientSecure.h>
+// #include <WiFiClientSecure.h> // Nicht mehr benötigt für reines HTTP
 #include "esp_camera.h"
 #include "esp_sleep.h"
 #include "config.h"
@@ -26,16 +26,6 @@
 // Brown‑Out‑Detector deaktivieren
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
-
-// ───────── TLS‑Optionen ─────────
-#define USE_INSECURE_TLS 1           // 1 = TLS‑Zertifikat ignorieren (nur internes Netz)
-#if !USE_INSECURE_TLS
-static const char root_CA[] PROGMEM = R"EOF(
------BEGIN CERTIFICATE-----
-... Root‑CA hier einfügen ...
------END CERTIFICATE-----
-)EOF";
-#endif
 
 // Deep‑Sleep‑Timer (5 min) in µs
 constexpr uint64_t SLEEP_USEC = 5ULL * 60ULL * 1000000ULL;
@@ -243,21 +233,12 @@ static bool sendJpegEspNow(uint8_t* buf, size_t len, uint32_t imageId, uint16_t 
 
 #endif
 
-// JPEG‑Upload – HTTP oder HTTPS (HTTP/1.0, fester Content‑Length)
+// JPEG‑Upload – HTTP (HTTP/1.0, fester Content‑Length)
 static bool sendJpeg(uint8_t* buf, size_t len, const char* url) {
   HTTPClient http;
   bool ok;
-  if (String(url).startsWith("https://")) {
-      static WiFiClientSecure tls;
-    #if USE_INSECURE_TLS
-      tls.setInsecure();
-    #else
-      tls.setCACert(root_CA);
-    #endif
-      ok = http.begin(tls, url);
-  } else {
-      ok = http.begin(url);
-  }
+  // Nur noch HTTP, keine HTTPS-Prüfung oder WiFiClientSecure nötig
+  ok = http.begin(url);
   if (!ok) { Serial.println(F("http.begin() fehlgeschlagen")); return false; }
 
   http.useHTTP10(true);

@@ -6,8 +6,8 @@
 const char* ssid = "DEIN_WLAN_SSID";          // Tragen Sie hier Ihren WLAN-Namen ein
 const char* password = "DEIN_WLAN_PASSWORT";  // Tragen Sie hier Ihr WLAN-Passwort ein
 
-// Server URL für HTTP/HTTPS Upload
-const char* serverURL = "https://DEIN_SERVER.DE/DEIN_UPLOAD_PFAD/upload.php"; // Tragen Sie hier Ihre Server-URL ein
+// Server URL für HTTP Upload
+const char* serverURL = "http://DEIN_SERVER.DE/DEIN_UPLOAD_PFAD/upload.php"; // Tragen Sie hier Ihre HTTP Server-URL ein
 
 // ---------------- ESP-NOW Upload (Optional) ----------------
 // Auf true setzen, um ESP-NOW anstelle von HTTP/HTTPS für den Bild-Upload zu verwenden.
