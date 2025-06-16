@@ -137,34 +137,39 @@ static float readVBat() {
   return v_adc;
 }
 
-// Helligkeitsanalyse für adaptive Kameraeinstellungen
-static bool analyzeImageBrightness(camera_fb_t* fb) {
-  if (!fb || fb->len < 1000) return false; // Zu kleines Bild
+// Helligkeitsanalyse basierend auf Kamera-Sensor-Werten
+static bool analyzeEnvironmentBrightness() {
+  sensor_t *s = esp_camera_sensor_get();
+  if (s == NULL) return false;
   
-  // Verbesserte Helligkeitsanalyse: Suche nach JPEG-Markern für Überbelichtung
-  uint32_t very_bright_bytes = 0;
-  uint32_t bright_bytes = 0;
-  uint32_t sample_count = 0;
+  // Mehrere Testbilder mit verschiedenen Einstellungen machen
+  // Test 1: Sehr kurze Belichtung - wenn das Bild noch hell ist, ist es draußen
+  s->set_exposure_ctrl(s, 0);      // Manuelle Belichtung
+  s->set_aec_value(s, 5);          // Extrem kurze Belichtung
+  s->set_gain_ctrl(s, 0);          // Manueller Gain
+  s->set_agc_gain(s, 0);           // Minimaler Gain
   
-  // Sampele jeden 50. Byte für bessere Performance
-  for (uint32_t i = 100; i < fb->len - 100; i += 50) {
-    uint8_t byte_val = fb->buf[i];
-    sample_count++;
-    
-    if (byte_val >= 240) {        // Sehr helle Bereiche (Überbelichtung)
-      very_bright_bytes++;
-    } else if (byte_val >= 180) { // Helle Bereiche
-      bright_bytes++;
-    }
+  delay(100); // Warten bis Einstellungen wirken
+  
+  camera_fb_t* test_fb = esp_camera_fb_get();
+  if (!test_fb) return false;
+  
+  // Einfache Analyse: Durchschnittliche Helligkeit der ersten 1000 Bytes
+  uint32_t brightness_sum = 0;
+  uint32_t sample_count = min(1000U, test_fb->len);
+  
+  for (uint32_t i = 0; i < sample_count; i++) {
+    brightness_sum += test_fb->buf[i];
   }
   
-  float very_bright_ratio = (float)very_bright_bytes / sample_count;
-  float bright_ratio = (float)(bright_bytes + very_bright_bytes) / sample_count;
+  float avg_brightness = (float)brightness_sum / sample_count;
+  esp_camera_fb_return(test_fb);
   
-  Serial.printf("[Cam] Sehr hell: %.3f, Hell: %.3f\n", very_bright_ratio, bright_ratio);
+  Serial.printf("[Cam] Durchschnittshelligkeit bei kurzer Belichtung: %.1f\n", avg_brightness);
   
-  // Helle Umgebung wenn viele sehr helle Pixel ODER sehr viele helle Pixel
-  return (very_bright_ratio > 0.15) || (bright_ratio > 0.6);
+  // Wenn bei extrem kurzer Belichtung die Durchschnittshelligkeit > 100 ist,
+  // dann ist es sehr hell (draußen)
+  return avg_brightness > 100.0f;
 }
 
 static void optimizeCameraSettings(bool bright_environment) {
@@ -449,21 +454,14 @@ void setup() {
   bool uploadSuccess = false;
   uint32_t imageIdForEspNow = millis();
 
-  // ─────── Adaptive Kamera-Optimierung mit Testbild ───────
-  camera_fb_t* test_fb = esp_camera_fb_get();
-  if (test_fb) {
-    bool bright_env = analyzeImageBrightness(test_fb);
-    esp_camera_fb_return(test_fb);
-    
-    // Kamera-Einstellungen basierend auf Helligkeit optimieren
-    optimizeCameraSettings(bright_env);
-    
-    // Kurz warten damit sich die Einstellungen setzen
-    delay(200);
-  } else {
-    Serial.println(F("[Cam] Testbild fehlgeschlagen - verwende Standardeinstellungen"));
-    optimizeCameraSettings(true); // Default: Außeneinstellungen
-  }
+  // ─────── Adaptive Kamera-Optimierung mit Helligkeitstest ───────
+  bool bright_env = analyzeEnvironmentBrightness();
+  
+  // Kamera-Einstellungen basierend auf Helligkeit optimieren
+  optimizeCameraSettings(bright_env);
+  
+  // Kurz warten damit sich die Einstellungen setzen
+  delay(200);
 
 #if USE_ESP_NOW
   Serial.println(F("[Main] ESP-NOW Upload ausgewählt."));
