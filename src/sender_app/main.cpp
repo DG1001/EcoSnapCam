@@ -137,39 +137,51 @@ static float readVBat() {
   return v_adc;
 }
 
-// Helligkeitsanalyse basierend auf Kamera-Sensor-Werten
+// Helligkeitsanalyse basierend auf JPEG-Dateigröße und Sensor-Werten
 static bool analyzeEnvironmentBrightness() {
   sensor_t *s = esp_camera_sensor_get();
   if (s == NULL) return false;
   
-  // Mehrere Testbilder mit verschiedenen Einstellungen machen
-  // Test 1: Sehr kurze Belichtung - wenn das Bild noch hell ist, ist es draußen
+  // Test 1: Sehr kurze Belichtung für Helligkeitstest
   s->set_exposure_ctrl(s, 0);      // Manuelle Belichtung
-  s->set_aec_value(s, 5);          // Extrem kurze Belichtung
+  s->set_aec_value(s, 3);          // Noch kürzere Belichtung
   s->set_gain_ctrl(s, 0);          // Manueller Gain
   s->set_agc_gain(s, 0);           // Minimaler Gain
+  s->set_brightness(s, 0);         // Neutral
+  s->set_contrast(s, 0);           // Neutral
   
-  delay(100); // Warten bis Einstellungen wirken
+  delay(150); // Mehr Zeit für Einstellungen
   
-  camera_fb_t* test_fb = esp_camera_fb_get();
-  if (!test_fb) return false;
+  camera_fb_t* test_fb1 = esp_camera_fb_get();
+  if (!test_fb1) return false;
   
-  // Einfache Analyse: Durchschnittliche Helligkeit der ersten 1000 Bytes
-  uint32_t brightness_sum = 0;
-  uint32_t sample_count = min(1000U, test_fb->len);
+  size_t dark_size = test_fb1->len;
+  esp_camera_fb_return(test_fb1);
   
-  for (uint32_t i = 0; i < sample_count; i++) {
-    brightness_sum += test_fb->buf[i];
-  }
+  // Test 2: Längere Belichtung für Vergleich
+  s->set_aec_value(s, 50);         // Längere Belichtung
+  delay(150);
   
-  float avg_brightness = (float)brightness_sum / sample_count;
-  esp_camera_fb_return(test_fb);
+  camera_fb_t* test_fb2 = esp_camera_fb_get();
+  if (!test_fb2) return false;
   
-  Serial.printf("[Cam] Durchschnittshelligkeit bei kurzer Belichtung: %.1f\n", avg_brightness);
+  size_t bright_size = test_fb2->len;
+  esp_camera_fb_return(test_fb2);
   
-  // Wenn bei extrem kurzer Belichtung die Durchschnittshelligkeit > 100 ist,
-  // dann ist es sehr hell (draußen)
-  return avg_brightness > 100.0f;
+  // Analyse: Bei heller Umgebung ist der Größenunterschied geringer
+  float size_ratio = (float)bright_size / dark_size;
+  
+  Serial.printf("[Cam] JPEG-Größen: kurz=%u, lang=%u, Verhältnis=%.3f\n", 
+                dark_size, bright_size, size_ratio);
+  
+  // Bei heller Umgebung (draußen) ist das Verhältnis kleiner,
+  // da auch bei kurzer Belichtung schon viel Detail vorhanden ist
+  bool is_bright = (size_ratio < 1.8f) && (dark_size > 8000);
+  
+  Serial.printf("[Cam] Umgebung: %s (Verhältnis: %.3f, Basis-Größe: %u)\n", 
+                is_bright ? "HELL" : "DUNKEL", size_ratio, dark_size);
+  
+  return is_bright;
 }
 
 static void optimizeCameraSettings(bool bright_environment) {
