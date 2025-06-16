@@ -144,10 +144,10 @@ static bool analyzeEnvironmentBrightness() {
   
   // Test 1: Sehr kurze Belichtung für Helligkeitstest
   s->set_exposure_ctrl(s, 0);      // Manuelle Belichtung
-  s->set_aec_value(s, 3);          // Noch kürzere Belichtung
+  s->set_aec_value(s, 1);          // Extrem kurze Belichtung für Sonnenlicht-Test
   s->set_gain_ctrl(s, 0);          // Manueller Gain
   s->set_agc_gain(s, 0);           // Minimaler Gain
-  s->set_brightness(s, 0);         // Neutral
+  s->set_brightness(s, -2);        // Reduzierte Helligkeit für Test
   s->set_contrast(s, 0);           // Neutral
   
   delay(150); // Mehr Zeit für Einstellungen
@@ -159,7 +159,7 @@ static bool analyzeEnvironmentBrightness() {
   esp_camera_fb_return(test_fb1);
   
   // Test 2: Längere Belichtung für Vergleich
-  s->set_aec_value(s, 50);         // Längere Belichtung
+  s->set_aec_value(s, 30);         // Moderatere Belichtung für besseren Vergleich
   delay(150);
   
   camera_fb_t* test_fb2 = esp_camera_fb_get();
@@ -174,32 +174,55 @@ static bool analyzeEnvironmentBrightness() {
   Serial.printf("[Cam] JPEG-Größen: kurz=%u, lang=%u, Verhältnis=%.3f\n", 
                 dark_size, bright_size, size_ratio);
   
-  // Bei heller Umgebung (draußen) ist das Verhältnis kleiner,
-  // da auch bei kurzer Belichtung schon viel Detail vorhanden ist
+  // Bei sehr heller Umgebung (Sonnenlicht) ist das Verhältnis noch kleiner
+  // und die Basis-Größe größer, da mehr Details auch bei minimaler Belichtung
+  bool is_very_bright = (size_ratio < 1.5f) && (dark_size > 10000);
   bool is_bright = (size_ratio < 1.8f) && (dark_size > 8000);
   
-  Serial.printf("[Cam] Umgebung: %s (Verhältnis: %.3f, Basis-Größe: %u)\n", 
-                is_bright ? "HELL" : "DUNKEL", size_ratio, dark_size);
-  
-  return is_bright;
+  if (is_very_bright) {
+    Serial.println(F("[Cam] Umgebung: SEHR HELL (Sonnenlicht)"));
+    return 2; // Rückgabewert 2 für sehr helle Umgebung (Sonnenlicht)
+  } else if (is_bright) {
+    Serial.println(F("[Cam] Umgebung: HELL (Tageslicht)"));
+    return 1; // Rückgabewert 1 für helle Umgebung (normales Tageslicht)
+  } else {
+    Serial.println(F("[Cam] Umgebung: DUNKEL (Innenraum/Schatten)"));
+    return 0; // Rückgabewert 0 für dunkle Umgebung
+  }
 }
 
-static void optimizeCameraSettings(bool bright_environment) {
+static void optimizeCameraSettings(int brightness_level) {
   sensor_t *s = esp_camera_sensor_get();
   if (s == NULL) return;
   
-  if (bright_environment) {
-    Serial.println(F("[Cam] Helle Umgebung erkannt - Außeneinstellungen"));
-    // Einstellungen für helles Tageslicht
+  if (brightness_level == 2) {
+    Serial.println(F("[Cam] Sehr helle Umgebung (Sonnenlicht) - Spezielle Sonnenlicht-Einstellungen"));
+    // Einstellungen für direktes Sonnenlicht
     s->set_exposure_ctrl(s, 0);      // Auto-Exposure AUS
     s->set_aec2(s, 0);               // AEC2 AUS
-    s->set_aec_value(s, 10);         // Sehr kurze Belichtung
+    s->set_aec_value(s, 1);          // Extrem kurze Belichtung für Sonnenlicht
+    s->set_gain_ctrl(s, 0);          // AGC AUS
+    s->set_agc_gain(s, 0);           // Gain minimal
+    s->set_awb_gain(s, 0);           // AWB Gain AUS
+    s->set_brightness(s, -3);        // Helligkeit stark reduzieren
+    s->set_contrast(s, 2);           // Kontrast erhöhen
+    s->set_saturation(s, -2);        // Sättigung reduzieren
+    s->set_wb_mode(s, 0);            // Weißabgleich: Auto
+    s->set_lenc(s, 1);               // Lens correction EIN
+    s->set_dcw(s, 1);                // Downsize EN
+  } else if (brightness_level == 1) {
+    Serial.println(F("[Cam] Helle Umgebung erkannt - Tageslicht-Einstellungen"));
+    // Einstellungen für normales Tageslicht
+    s->set_exposure_ctrl(s, 0);      // Auto-Exposure AUS
+    s->set_aec2(s, 0);               // AEC2 AUS
+    s->set_aec_value(s, 5);          // Sehr kurze Belichtung
     s->set_gain_ctrl(s, 0);          // AGC AUS
     s->set_agc_gain(s, 0);           // Gain minimal
     s->set_awb_gain(s, 0);           // AWB Gain AUS
     s->set_brightness(s, -2);        // Helligkeit reduzieren
-    s->set_contrast(s, 3);           // Kontrast erhöhen
-    s->set_saturation(s, -2);        // Sättigung reduzieren
+    s->set_contrast(s, 2);           // Kontrast erhöhen
+    s->set_saturation(s, -1);        // Sättigung leicht reduzieren
+    s->set_wb_mode(s, 0);            // Weißabgleich: Auto
   } else {
     Serial.println(F("[Cam] Dunkle Umgebung erkannt - Inneneinstellungen"));
     // Einstellungen für Innenräume
@@ -467,10 +490,10 @@ void setup() {
   uint32_t imageIdForEspNow = millis();
 
   // ─────── Adaptive Kamera-Optimierung mit Helligkeitstest ───────
-  bool bright_env = analyzeEnvironmentBrightness();
+  int brightness_level = analyzeEnvironmentBrightness();
   
-  // Kamera-Einstellungen basierend auf Helligkeit optimieren
-  optimizeCameraSettings(bright_env);
+  // Kamera-Einstellungen basierend auf Helligkeitsstufe optimieren
+  optimizeCameraSettings(brightness_level);
   
   // Kurz warten damit sich die Einstellungen setzen
   delay(200);
