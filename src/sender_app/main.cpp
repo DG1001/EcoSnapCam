@@ -1,33 +1,24 @@
 // ────────────────────────────────────────────────────────────────
-//  EcoSnapCam – vollständiger Sketch ohne goto (main.ino)
+//  EcoSnapCam – optimiert für minimalen Stromverbrauch
 //  Board: AI‑Thinker ESP32‑CAM  |  Framework: Arduino (PlatformIO)
-// ────────────────────────────────────────────────────────────────
-//  Wake‑Up‑Quellen:
-//     • 5‑Minuten‑Timer
-//     • PIR‑Sensor an GPIO 13
-//  Ablauf nach Wake‑Up:
-//     1. Batteriespannung messen (GPIO14)
-//     2. Foto (SVGA) aufnehmen
-//     3. JPEG via HTTP/HTTPS hochladen (HTTP/1.0, fester Length)
-//     4. Deep‑Sleep – geschätzte Laufzeit >200 Tage mit 2×AA
-// ────────────────────────────────────────────────────────────────
-//  SSID / PW / SERVER_URL stehen in  config.h
 // ────────────────────────────────────────────────────────────────
 
 #include <Arduino.h>
 #include <WiFi.h>
-#include <esp_now.h> // Für ESP-NOW
+#include <esp_now.h>
 #include <HTTPClient.h>
-// #include <WiFiClientSecure.h> // Nicht mehr benötigt für reines HTTP
 #include "esp_camera.h"
 #include "esp_sleep.h"
+#include "esp_wifi.h"        // Für WiFi Power Management
+#include "esp_bt.h"          // Für Bluetooth deaktivieren
+#include "driver/adc.h"      // Für ADC Power Management
 #include "config.h"
 
-// Brown‑Out‑Detector deaktivieren
+// Brown‑Out‑Detector und RTC deaktivieren
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
 
-// Deep‑Sleep‑Timer (5 min) in µs
+// Deep‑Sleep‑Timer (5 min) in µs
 constexpr uint64_t SLEEP_USEC = 5ULL * 60ULL * 1000000ULL;
 // PIR‑Sensor (RTC‑fähiger Pin)
 static constexpr gpio_num_t PIR_PIN  = GPIO_NUM_13;
@@ -35,30 +26,24 @@ static constexpr gpio_num_t PIR_PIN  = GPIO_NUM_13;
 static constexpr int        VBAT_PIN = 14;
 
 #if USE_ESP_NOW
-// ESP-NOW spezifische Definitionen
+// ESP-NOW spezifische Definitionen (unverändert)
 esp_now_peer_info_t peerInfo;
-volatile bool espNowSendSuccess = false; // Wird vom Callback gesetzt
+volatile bool espNowSendSuccess = false;
 
-// Maximale Datenmenge pro ESP-NOW Chunk (250 Bytes max ESP-NOW Payload - Größe unseres Headers)
-// Unser Header: image_id (4), total_size (4), chunk_index (2), total_chunks (2), data_len (1), vbat_mv_high (1), vbat_mv_low (1) = 15 Bytes
 #define ESP_NOW_MAX_DATA_PER_CHUNK (250 - 15) 
 
 typedef struct __attribute__((packed)) esp_now_image_chunk_t {
-    uint32_t image_id;     // Eindeutige ID für das Bild (z.B. millis() beim Start des Sendevorgangs)
-    uint32_t total_size;   // Gesamtgröße des Bildes in Bytes
-    uint16_t chunk_index;  // Aktueller Chunk-Index (0-basiert)
-    uint16_t total_chunks; // Gesamtzahl der Chunks für dieses Bild
-    uint8_t  data_len;     // Länge der Bilddaten in diesem Chunk (kann beim letzten Chunk kleiner sein)
-    uint8_t  vbat_mv_high; // Batteriespannung in mV (oberes Byte)
-    uint8_t  vbat_mv_low;  // Batteriespannung in mV (unteres Byte)
-    uint8_t  data[ESP_NOW_MAX_DATA_PER_CHUNK]; // Die eigentlichen Bilddaten des Chunks
+    uint32_t image_id;
+    uint32_t total_size;
+    uint16_t chunk_index;
+    uint16_t total_chunks;
+    uint8_t  data_len;
+    uint8_t  vbat_mv_high;
+    uint8_t  vbat_mv_low;
+    uint8_t  data[ESP_NOW_MAX_DATA_PER_CHUNK];
 } esp_now_image_chunk_t;
 
-// Callback-Funktion, die nach dem Senden von ESP-NOW Daten aufgerufen wird
 static void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
-  // Serial.printf("[ESP-NOW] Sendestatus an %02X:%02X:%02X:%02X:%02X:%02X: %s\n",
-  //               mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5],
-  //               status == ESP_NOW_SEND_SUCCESS ? "Erfolg" : "Fehler");
   espNowSendSuccess = (status == ESP_NOW_SEND_SUCCESS);
 }
 #endif
@@ -81,6 +66,44 @@ static void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 #define HREF_GPIO_NUM 23
 #define PCLK_GPIO_NUM 22
 
+// ───────── Power Management Funktionen ─────────
+static void disablePeripherals() {
+  // Bluetooth komplett deaktivieren
+  esp_bt_controller_deinit();
+  esp_bt_mem_release(ESP_BT_MODE_BTDM);
+  
+  // ADC ausschalten wenn nicht verwendet
+  adc_power_release();
+  
+  // Nicht verwendete GPIOs als Input mit Pullup setzen
+  // (verhindert floating pins = Stromverbrauch)
+  for (int gpio = 0; gpio <= 39; gpio++) {
+    // Skip bereits verwendete Pins
+    if (gpio == PIR_PIN || gpio == VBAT_PIN || 
+        gpio == PWDN_GPIO_NUM || gpio == XCLK_GPIO_NUM ||
+        gpio == SIOD_GPIO_NUM || gpio == SIOC_GPIO_NUM ||
+        gpio == Y9_GPIO_NUM || gpio == Y8_GPIO_NUM || gpio == Y7_GPIO_NUM ||
+        gpio == Y6_GPIO_NUM || gpio == Y5_GPIO_NUM || gpio == Y4_GPIO_NUM ||
+        gpio == Y3_GPIO_NUM || gpio == Y2_GPIO_NUM || gpio == VSYNC_GPIO_NUM ||
+        gpio == HREF_GPIO_NUM || gpio == PCLK_GPIO_NUM) {
+      continue;
+    }
+    
+    // Nur gültige GPIO Pins konfigurieren
+    if (GPIO_IS_VALID_GPIO(gpio)) {
+      pinMode(gpio, INPUT_PULLUP);
+    }
+  }
+}
+
+static void enableLowPowerMode() {
+  // CPU Frequenz reduzieren für Upload-Phase
+  setCpuFrequencyMhz(80);  // Von 240MHz auf 80MHz
+  
+  // WiFi Power Save aktivieren (falls WiFi verwendet wird)
+  esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
+}
+
 // ───────── Hilfsfunktionen ─────────
 static void printWakeReason() {
   switch (esp_sleep_get_wakeup_cause()) {
@@ -91,14 +114,17 @@ static void printWakeReason() {
 }
 
 static float readVBat() {
-  // Annahme: Batterie direkt am ADC-Pin (ggf. über einen Strombegrenzungswiderstand).
-  // Die gemessene Spannung am ADC-Pin entspricht der Batteriespannung.
-  // Die Referenzspannung des ADC wird hier mit 3.3V angenommen.
-  // Für höhere Genauigkeit könnte die ADC-Kalibrierung verwendet werden.
-  analogSetPinAttenuation(VBAT_PIN, ADC_11db);  // Messbereich ca. 0–3.6 V am ADC-Pin
-  uint16_t raw = analogRead(VBAT_PIN);          // Rohwert 0–4095
-  float v_adc = raw * 3.3f / 4095.0f;           // Spannung am ADC-Pin (entspricht Batteriespannung)
-  return v_adc;                                 // Tatsächliche Batteriespannung
+  // ADC für Messung aktivieren
+  adc_power_acquire();
+  
+  analogSetPinAttenuation(VBAT_PIN, ADC_11db);
+  uint16_t raw = analogRead(VBAT_PIN);
+  float v_adc = raw * 3.3f / 4095.0f;
+  
+  // ADC wieder deaktivieren
+  adc_power_release();
+  
+  return v_adc;
 }
 
 static bool initCamera() {
@@ -111,18 +137,61 @@ static bool initCamera() {
   cfg.pin_pclk = PCLK_GPIO_NUM; cfg.pin_vsync = VSYNC_GPIO_NUM; cfg.pin_href = HREF_GPIO_NUM;
   cfg.pin_sscb_sda = SIOD_GPIO_NUM; cfg.pin_sscb_scl = SIOC_GPIO_NUM;
   cfg.pin_pwdn = PWDN_GPIO_NUM; cfg.pin_reset = RESET_GPIO_NUM;
-  cfg.xclk_freq_hz = 20000000;          // 20 MHz
+  
+  cfg.xclk_freq_hz = 10000000;          // Reduziert von 20MHz auf 10MHz (spart Strom)
   cfg.frame_size   = FRAMESIZE_SVGA;
   cfg.pixel_format = PIXFORMAT_JPEG;
-  cfg.jpeg_quality = 10;                // 0–63 (niedriger = besser)
+  cfg.jpeg_quality = 12;                // Leicht erhöht für bessere Kompression
   cfg.fb_count     = 1;
-  return esp_camera_init(&cfg) == ESP_OK;
+  cfg.fb_location  = CAMERA_FB_IN_PSRAM; // PSRAM nutzen falls verfügbar
+  cfg.grab_mode    = CAMERA_GRAB_LATEST; // Neuestes Frame nehmen
+
+  if (esp_camera_init(&cfg) != ESP_OK) {
+    return false;
+  }
+  
+  // ─────── Kamera-Sensor optimieren für bessere Belichtung ───────
+  sensor_t *s = esp_camera_sensor_get();
+  if (s != NULL) {
+    // Automatische Belichtungskorrektur aktivieren
+    s->set_exposure_ctrl(s, 1);      // Auto-Exposure EIN
+    s->set_aec2(s, 1);               // Automatic Exposure Control 2 EIN
+    s->set_ae_level(s, -1);          // Belichtung etwas reduzieren (-2 bis +2)
+    
+    // Automatischer Weißabgleich
+    s->set_whitebal(s, 1);           // AWB EIN
+    s->set_awb_gain(s, 1);           // AWB Gain EIN
+    
+    // Automatischer Gain Control
+    s->set_gain_ctrl(s, 1);          // AGC EIN
+    s->set_agc_gain(s, 10);          // AGC Gain etwas reduzieren (0-30)
+    
+    // Brightness und Contrast optimieren
+    s->set_brightness(s, 0);         // Helligkeit neutral (Standard)
+    s->set_contrast(s, 0);           // Kontrast neutral
+    s->set_saturation(s, 0);         // Sättigung neutral
+    
+    // Weitere Anti-Übersteuerungs-Einstellungen
+    s->set_hmirror(s, 0);            // Horizontal mirror
+    s->set_vflip(s, 0);              // Vertical flip
+    s->set_lenc(s, 1);               // Lens correction EIN
+    s->set_bpc(s, 1);                // Black pixel cancel EIN
+    s->set_wpc(s, 1);                // White pixel cancel EIN
+    s->set_raw_gma(s, 1);            // Gamma correction EIN
+    
+    Serial.println(F("[Cam] Belichtungsoptimierung aktiviert"));
+  }
+  
+  return true;
 }
 
 static bool wifiConnect() {
+  // WiFi Power Management vor Connect setzen
+  esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
+  
   WiFi.begin(ssid, password);
   Serial.print(F("Wi‑Fi"));
-  for (uint32_t t0 = millis(); WiFi.status()!=WL_CONNECTED && millis()-t0<15000; ) {
+  for (uint32_t t0 = millis(); WiFi.status()!=WL_CONNECTED && millis()-t0<10000; ) {
     delay(250); Serial.print('.');
   }
   Serial.println();
@@ -131,13 +200,8 @@ static bool wifiConnect() {
 
 #if USE_ESP_NOW
 static bool initEspNow() {
-  WiFi.mode(WIFI_STA); // ESP-NOW benötigt den STA-Modus
-  // Optional: WiFi.disconnect(); // Um sicherzustellen, dass keine alte Verbindung besteht.
-  // Der Kanal wird in peerInfo.channel gesetzt, ESP-NOW kümmert sich darum.
-  // Es ist nicht notwendig, WiFi.begin() für den ESP-NOW Client-Modus aufzurufen, wenn keine AP-Verbindung benötigt wird.
-  // Wenn ESP_NOW_CHANNEL 0 ist, wird der aktuelle STA-Kanal verwendet.
-  // Wenn ein spezifischer Kanal gesetzt ist, muss der ESP32 ggf. darauf wechseln.
-  // esp_wifi_set_channel(ESP_NOW_CHANNEL, WIFI_SECOND_CHAN_NONE); // Falls fester Kanal benötigt wird und nicht 0
+  WiFi.mode(WIFI_STA);
+  esp_wifi_set_ps(WIFI_PS_MAX_MODEM); // Power Save auch für ESP-NOW
 
   if (esp_now_init() != ESP_OK) {
     Serial.println(F("[ESP-NOW] Fehler bei der Initialisierung"));
@@ -147,31 +211,24 @@ static bool initEspNow() {
 
   memcpy(peerInfo.peer_addr, espNowReceiverMac, 6);
   peerInfo.channel = ESP_NOW_CHANNEL; 
-  peerInfo.encrypt = false; // Keine Verschlüsselung für dieses Beispiel
-  // peerInfo.ifidx = WIFI_IF_STA; // Standardmäßig WIFI_IF_STA
+  peerInfo.encrypt = false;
 
   if (esp_now_add_peer(&peerInfo) != ESP_OK) {
     Serial.println(F("[ESP-NOW] Fehler beim Hinzufügen des Peers"));
-    esp_now_deinit(); // Aufräumen
+    esp_now_deinit();
     return false;
   }
   Serial.println(F("[ESP-NOW] Initialisierung erfolgreich, Peer hinzugefügt."));
   return true;
 }
 
-
-// ────────────────────────────────────────────────────────────────
-//  Korrigierte sendJpegEspNow Funktion
-//  Behebt ESP-NOW Buffer-Overflow Probleme
-// ────────────────────────────────────────────────────────────────
 static bool sendJpegEspNow(uint8_t* buf, size_t len, uint32_t imageId, uint16_t v_bat_mv) {
   if (len == 0) {
     Serial.println(F("[ESP-NOW] Keine Daten zum Senden."));
     return false;
   }
 
-  // Bildgröße für ESP-NOW begrenzen (wegen 250-Byte Chunks)
-  if (len > 50000) {  // 50KB Limit für ESP-NOW
+  if (len > 50000) {
     Serial.printf("[ESP-NOW] Bild zu groß für ESP-NOW: %u Bytes. Maximum: 50KB\n", len);
     return false;
   }
@@ -202,7 +259,6 @@ static bool sendJpegEspNow(uint8_t* buf, size_t len, uint32_t imageId, uint16_t 
     esp_err_t result = esp_now_send(espNowReceiverMac, (uint8_t*)&chunk_message, messageSize);
 
     if (result == ESP_OK) {
-      // Warte auf Callback mit Timeout
       unsigned long startTime = millis();
       while (!espNowSendSuccess && (millis() - startTime < 3000)) {
         delay(10);
@@ -213,12 +269,9 @@ static bool sendJpegEspNow(uint8_t* buf, size_t len, uint32_t imageId, uint16_t 
         return false; 
       }
 
-      // KRITISCH: Pause zwischen Chunks um Buffer-Overflow zu vermeiden
-      if (i < totalChunks - 1) {  // Nicht nach dem letzten Chunk
-        delay(20);  // 20ms Pause - verhindert ESP_ERR_ESPNOW_NO_MEM
+      if (i < totalChunks - 1) {
+        delay(20);
       }
-
-      // Serial.printf("[ESP-NOW] Chunk %u/%u gesendet\n", i + 1, totalChunks);
     } else {
       Serial.printf("[ESP-NOW] Fehler bei Chunk %u: %s\n", 
                     i + 1, esp_err_to_name(result));
@@ -229,35 +282,48 @@ static bool sendJpegEspNow(uint8_t* buf, size_t len, uint32_t imageId, uint16_t 
   Serial.println(F("[ESP-NOW] Übertragung komplett"));
   return true;
 }
-
-
 #endif
 
-// JPEG‑Upload – HTTP (HTTP/1.0, fester Content‑Length)
 static bool sendJpeg(uint8_t* buf, size_t len, const char* url) {
   HTTPClient http;
-  bool ok;
-  // Nur noch HTTP, keine HTTPS-Prüfung oder WiFiClientSecure nötig
-  ok = http.begin(url);
-  if (!ok) { Serial.println(F("http.begin() fehlgeschlagen")); return false; }
+  bool ok = http.begin(url);
+  if (!ok) { 
+    Serial.println(F("http.begin() fehlgeschlagen")); 
+    return false; 
+  }
 
   http.useHTTP10(true);
   http.addHeader("Content-Type", "image/jpeg");
-  http.setTimeout(10000); // Timeout auf 10 Sekunden setzen
-  Serial.printf("Sende %u Bytes an: %s\n", len, url); // Zusätzliche Debug-Ausgabe
-  Serial.printf("[HTTP] Freier Heap vor POST: %u Bytes\n", ESP.getFreeHeap());
+  http.setTimeout(8000); // Timeout reduziert
+  
+  Serial.printf("Sende %u Bytes an: %s\n", len, url);
   int rc = http.POST(buf, len);
-  Serial.printf("[HTTP] Freier Heap nach POST: %u Bytes\n", ESP.getFreeHeap());
   Serial.printf("HTTP rc=%d (%s)\n", rc, http.errorToString(rc).c_str());
-  if (rc > 0) Serial.println(http.getString()); // Server-Antwort ausgeben (nützlich für Debugging)
+  
+  if (rc > 0) Serial.println(http.getString());
   http.end();
-  // Nur HTTP-Statuscodes 200-299 als Erfolg werten
+  
   return rc >= 200 && rc < 300;
 }
 
 static void goDeepSleep() {
+  Serial.println(F("Deep‑Sleep Vorbereitung..."));
+  
+  // Kamera komplett ausschalten
+  esp_camera_deinit();
+  
+  // Alle nicht benötigten Peripherie ausschalten
+  disablePeripherals();
+  
+  // RTC Slow Memory und ULP deaktivieren für maximale Ersparnis
+  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_SLOW_MEM, ESP_PD_OPTION_OFF);
+  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_FAST_MEM, ESP_PD_OPTION_OFF);
+  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_OFF);
+  
   Serial.println(F("Deep‑Sleep"));
-  delay(50);
+  Serial.flush(); // Warten bis Serial ausgegeben wurde
+  delay(100);
+  
   esp_sleep_enable_timer_wakeup(SLEEP_USEC);
   esp_sleep_enable_ext0_wakeup(PIR_PIN, 1);
   esp_deep_sleep_start();
@@ -266,15 +332,27 @@ static void goDeepSleep() {
 // ───────── setup() ─────────
 void setup() {
   Serial.begin(115200);
-  delay(300);
-  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // Brown‑Out OFF
+  delay(200); // Reduziert von 300ms
+  
+  // Brown‑Out‑Detector deaktivieren
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+  
+  // Sofort Power Management aktivieren
+  enableLowPowerMode();
 
   printWakeReason();
   pinMode(PIR_PIN, INPUT_PULLDOWN);
 
+  // Batteriespannung messen
   float vbat = readVBat();
   uint16_t v_mV = static_cast<uint16_t>(vbat * 1000 + 0.5f);
   Serial.printf("VBAT %.2f V\n", vbat);
+  
+  // Low-Battery Schutz
+  if (vbat < 2.0f) {
+    Serial.println(F("Batterie zu schwach - Deep Sleep"));
+    goDeepSleep();
+  }
 
   if (!initCamera()) {
     Serial.println(F("Cam init fail – Sleep"));
@@ -282,13 +360,12 @@ void setup() {
   }
 
   bool uploadSuccess = false;
-  uint32_t imageIdForEspNow = millis(); // Eindeutige ID für dieses Bild bei ESP-NOW
+  uint32_t imageIdForEspNow = millis();
 
 #if USE_ESP_NOW
   Serial.println(F("[Main] ESP-NOW Upload ausgewählt."));
   if (!initEspNow()) {
     Serial.println(F("[Main] ESP-NOW Init fail – Sleep"));
-    // WiFi.mode(WIFI_OFF) wird unten generell aufgerufen
   } else {
     if (camera_fb_t* fb = esp_camera_fb_get()) {
       uploadSuccess = sendJpegEspNow(fb->buf, fb->len, imageIdForEspNow, v_mV);
@@ -296,24 +373,23 @@ void setup() {
     } else {
       Serial.println(F("Foto capture fehlgeschlagen"));
     }
-    esp_now_deinit(); // ESP-NOW nach Gebrauch deaktivieren
+    esp_now_deinit();
     Serial.println(F("[ESP-NOW] Deinitialisiert."));
   }
 #else
-  Serial.println(F("[Main] HTTP/S Upload ausgewählt."));
+  Serial.println(F("[Main] HTTP Upload ausgewählt."));
   if (!wifiConnect()) {
     Serial.println(F("WiFi fail – Sleep"));
-    // WiFi.mode(WIFI_OFF) wird unten generell aufgerufen
   } else {
     if (camera_fb_t* fb = esp_camera_fb_get()) {
-        char url_buffer[256]; // Puffer für die URL, Größe ggf. anpassen
+        char url_buffer[256];
         snprintf(url_buffer, sizeof(url_buffer), "%s?vbat=%u", serverURL, v_mV);
         uploadSuccess = sendJpeg(fb->buf, fb->len, url_buffer);
         esp_camera_fb_return(fb);
     } else {
         Serial.println(F("Foto capture fehlgeschlagen"));
     }
-    WiFi.disconnect(true); // WLAN trennen nach HTTP Upload
+    WiFi.disconnect(true);
     Serial.println(F("WiFi getrennt."));
   }
 #endif
@@ -324,9 +400,11 @@ void setup() {
     Serial.println(F("Bild-Upload fehlgeschlagen."));
   }
   
-  WiFi.mode(WIFI_OFF); // WLAN Modul komplett ausschalten vor Deep Sleep
-  Serial.println(F("WiFi Modul AUS."));
-
+  // WiFi komplett ausschalten
+  WiFi.mode(WIFI_OFF);
+  esp_wifi_stop();
+  esp_wifi_deinit();
+  
   goDeepSleep();
 }
 
