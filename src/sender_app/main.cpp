@@ -25,6 +25,11 @@ static constexpr gpio_num_t PIR_PIN  = GPIO_NUM_13;
 // Batteriespannung (ADC2_CH6 an GPIO14)
 static constexpr int        VBAT_PIN = 14;
 
+// Globale Flags für saubere Deinitialisierung
+static bool adc_initialized = false;
+static bool camera_initialized = false;
+static bool bt_initialized = false;
+
 #if USE_ESP_NOW
 // ESP-NOW spezifische Definitionen (unverändert)
 esp_now_peer_info_t peerInfo;
@@ -68,12 +73,26 @@ static void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 
 // ───────── Power Management Funktionen ─────────
 static void disablePeripherals() {
-  // Bluetooth komplett deaktivieren
-  esp_bt_controller_deinit();
-  esp_bt_mem_release(ESP_BT_MODE_BTDM);
+  Serial.println(F("[Power] Deaktiviere Peripherie..."));
   
-  // ADC ausschalten wenn nicht verwendet
-  adc_power_release();
+  // Bluetooth sicher deaktivieren
+  if (bt_initialized) {
+    esp_err_t bt_err = esp_bt_controller_deinit();
+    if (bt_err == ESP_OK) {
+      esp_bt_mem_release(ESP_BT_MODE_BTDM);
+      bt_initialized = false;
+      Serial.println(F("[Power] Bluetooth deaktiviert"));
+    } else {
+      Serial.printf("[Power] BT Deinit Fehler: %s\n", esp_err_to_name(bt_err));
+    }
+  }
+  
+  // ADC sicher ausschalten
+  if (adc_initialized) {
+    adc_power_release();
+    adc_initialized = false;
+    Serial.println(F("[Power] ADC deaktiviert"));
+  }
   
   // Nicht verwendete GPIOs als Input mit Pullup setzen
   // (verhindert floating pins = Stromverbrauch)
@@ -94,6 +113,7 @@ static void disablePeripherals() {
       pinMode(gpio, INPUT_PULLUP);
     }
   }
+  Serial.println(F("[Power] GPIOs konfiguriert"));
 }
 
 static void enableLowPowerMode() {
@@ -114,20 +134,24 @@ static void printWakeReason() {
 }
 
 static float readVBat() {
-  // ADC für Messung aktivieren
-  adc_power_acquire();
+  // ADC für Messung sicher aktivieren
+  if (!adc_initialized) {
+    adc_power_acquire();
+    adc_initialized = true;
+  }
   
   analogSetPinAttenuation(VBAT_PIN, ADC_11db);
   uint16_t raw = analogRead(VBAT_PIN);
   float v_adc = raw * 3.3f / 4095.0f;
   
-  // ADC wieder deaktivieren
-  adc_power_release();
+  // ADC nicht sofort deaktivieren - wird in disablePeripherals() gemacht
   
   return v_adc;
 }
 
 static bool initCamera() {
+  Serial.println(F("[Cam] Initialisierung..."));
+  
   camera_config_t cfg{};
   cfg.ledc_channel = LEDC_CHANNEL_0;
   cfg.ledc_timer   = LEDC_TIMER_0;
@@ -146,9 +170,14 @@ static bool initCamera() {
   cfg.fb_location  = CAMERA_FB_IN_PSRAM; // PSRAM nutzen falls verfügbar
   cfg.grab_mode    = CAMERA_GRAB_LATEST; // Neuestes Frame nehmen
 
-  if (esp_camera_init(&cfg) != ESP_OK) {
+  esp_err_t err = esp_camera_init(&cfg);
+  if (err != ESP_OK) {
+    Serial.printf("[Cam] Init Fehler: %s\n", esp_err_to_name(err));
     return false;
   }
+  
+  camera_initialized = true;
+  Serial.println(F("[Cam] Initialisierung erfolgreich"));
   
   // ─────── Kamera-Sensor optimieren für bessere Belichtung ───────
   sensor_t *s = esp_camera_sensor_get();
@@ -309,8 +338,16 @@ static bool sendJpeg(uint8_t* buf, size_t len, const char* url) {
 static void goDeepSleep() {
   Serial.println(F("Deep‑Sleep Vorbereitung..."));
   
-  // Kamera komplett ausschalten
-  esp_camera_deinit();
+  // Kamera sicher deinitialisieren
+  if (camera_initialized) {
+    esp_err_t err = esp_camera_deinit();
+    if (err == ESP_OK) {
+      camera_initialized = false;
+      Serial.println(F("[Power] Kamera deinitialisiert"));
+    } else {
+      Serial.printf("[Power] Kamera Deinit Fehler: %s\n", esp_err_to_name(err));
+    }
+  }
   
   // Alle nicht benötigten Peripherie ausschalten
   disablePeripherals();
@@ -336,6 +373,16 @@ void setup() {
   
   // Brown‑Out‑Detector deaktivieren
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+  
+  // Initialisierungsflags zurücksetzen
+  adc_initialized = false;
+  camera_initialized = false;
+  bt_initialized = false;
+  
+  // Bluetooth Status prüfen und Flag setzen
+  if (esp_bt_controller_get_status() != ESP_BT_CONTROLLER_STATUS_IDLE) {
+    bt_initialized = true;
+  }
   
   // Sofort Power Management aktivieren
   enableLowPowerMode();
