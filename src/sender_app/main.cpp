@@ -211,7 +211,21 @@ static void optimizeCameraSettings(int brightness_level) {
   sensor_t *s = esp_camera_sensor_get();
   if (s == NULL) return;
   
-  if (brightness_level == 2) {
+  if (brightness_level == 3) {
+    Serial.println(F("[Cam] Kamera-Automatik - Auto-Belichtung und Auto-Weißabgleich"));
+    // Einstellungen für vollautomatischen Modus
+    s->set_exposure_ctrl(s, 1);      // Auto-Exposure EIN
+    s->set_aec2(s, 1);               // AEC2 EIN
+    s->set_ae_level(s, 0);           // Neutrale Belichtungskorrektur
+    s->set_gain_ctrl(s, 1);          // AGC EIN
+    s->set_agc_gain(s, 5);           // Moderater Gain
+    s->set_whitebal(s, 1);           // AWB EIN
+    s->set_awb_gain(s, 1);           // AWB Gain EIN
+    s->set_brightness(s, 0);         // Neutrale Helligkeit
+    s->set_contrast(s, 0);           // Neutraler Kontrast
+    s->set_saturation(s, 0);         // Neutrale Sättigung
+    s->set_wb_mode(s, 0);            // Weißabgleich: Auto
+  } else if (brightness_level == 2) {
     Serial.println(F("[Cam] Sehr helle Umgebung (Sonnenlicht) - Spezielle Sonnenlicht-Einstellungen"));
     // Einstellungen für direktes Sonnenlicht
     s->set_exposure_ctrl(s, 0);      // Auto-Exposure AUS
@@ -524,6 +538,10 @@ void setup() {
     // Immer sehr hell (Sonnenlicht-Einstellungen)
     brightness_level = 2;
     Serial.println(F("[Cam] Fester Belichtungsmodus: SEHR HELL (Sonnenlicht)"));
+  #elif EXPOSURE_MODE == 4
+    // Kamera-Automatik
+    brightness_level = 3;
+    Serial.println(F("[Cam] Fester Belichtungsmodus: KAMERA-AUTOMATIK"));
   #else
     #error "Ungültiger EXPOSURE_MODE in config.h"
   #endif

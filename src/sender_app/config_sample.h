@@ -7,6 +7,7 @@
 // 1 = Immer dunkel (Innenraum-Einstellungen)
 // 2 = Immer hell (Tageslicht-Einstellungen)
 // 3 = Immer sehr hell (Sonnenlicht-Einstellungen)
+// 4 = Kamera-Automatik (Auto-Belichtung und Auto-Weißabgleich)
 #define EXPOSURE_MODE 0
 
 // ---------------- HTTP/HTTPS Upload (Standard) ----------------
