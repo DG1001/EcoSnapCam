@@ -172,7 +172,7 @@ build_flags =
 - **Sleep-Zeit:** 5 Minuten (konfigurierbar)
 - **Übertragungsarten:** HTTP/HTTPS POST, ESP-NOW
 - **ESP-NOW Reichweite:** Bis zu 200m (Sichtlinie)
-- **Stromverbrauch:** < 1mA im Deep Sleep
+- **Stromverbrauch:** ~3mA im Deep Sleep (bei 3.3V Direkteinspeisung)
 - **Betriebsspannung:** 3.3V (ESP32-CAM)
 
 ## Fehlerbehebung
