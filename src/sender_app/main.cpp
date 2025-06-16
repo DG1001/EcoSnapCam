@@ -352,17 +352,20 @@ static void goDeepSleep() {
   // Alle nicht benötigten Peripherie ausschalten
   disablePeripherals();
   
-  // RTC Slow Memory und ULP deaktivieren für maximale Ersparnis
-  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_SLOW_MEM, ESP_PD_OPTION_OFF);
+  // Wakeup-Quellen konfigurieren BEVOR wir Power-Domains konfigurieren
+  esp_sleep_enable_timer_wakeup(SLEEP_USEC);
+  esp_sleep_enable_ext0_wakeup(PIR_PIN, 1);
+  
+  // RTC Peripherie muss aktiv bleiben für ext0 wakeup
+  // RTC_SLOW_MEM muss aktiv bleiben für Timer wakeup
+  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_SLOW_MEM, ESP_PD_OPTION_ON);
   esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_FAST_MEM, ESP_PD_OPTION_OFF);
-  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_OFF);
+  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
   
   Serial.println(F("Deep‑Sleep"));
   Serial.flush(); // Warten bis Serial ausgegeben wurde
   delay(100);
   
-  esp_sleep_enable_timer_wakeup(SLEEP_USEC);
-  esp_sleep_enable_ext0_wakeup(PIR_PIN, 1);
   esp_deep_sleep_start();
 }
 
