@@ -505,8 +505,28 @@ void setup() {
   bool uploadSuccess = false;
   uint32_t imageIdForEspNow = millis();
 
-  // ─────── Adaptive Kamera-Optimierung mit Helligkeitstest ───────
-  int brightness_level = analyzeEnvironmentBrightness();
+  // ─────── Kamera-Optimierung basierend auf Konfiguration oder Helligkeitstest ───────
+  int brightness_level = 0;
+  
+  #if EXPOSURE_MODE == 0
+    // Automatischer Modus - Helligkeit analysieren
+    brightness_level = analyzeEnvironmentBrightness();
+    Serial.println(F("[Cam] Automatischer Belichtungsmodus aktiv"));
+  #elif EXPOSURE_MODE == 1
+    // Immer dunkel (Innenraum-Einstellungen)
+    brightness_level = 0;
+    Serial.println(F("[Cam] Fester Belichtungsmodus: DUNKEL (Innenraum)"));
+  #elif EXPOSURE_MODE == 2
+    // Immer hell (Tageslicht-Einstellungen)
+    brightness_level = 1;
+    Serial.println(F("[Cam] Fester Belichtungsmodus: HELL (Tageslicht)"));
+  #elif EXPOSURE_MODE == 3
+    // Immer sehr hell (Sonnenlicht-Einstellungen)
+    brightness_level = 2;
+    Serial.println(F("[Cam] Fester Belichtungsmodus: SEHR HELL (Sonnenlicht)"));
+  #else
+    #error "Ungültiger EXPOSURE_MODE in config.h"
+  #endif
   
   // Kamera-Einstellungen basierend auf Helligkeitsstufe optimieren
   optimizeCameraSettings(brightness_level);
