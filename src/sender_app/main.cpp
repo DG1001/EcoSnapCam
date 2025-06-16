@@ -167,40 +167,37 @@ static bool initCamera() {
   camera_initialized = true;
   Serial.println(F("[Cam] Initialisierung erfolgreich"));
   
-  // ─────── Kamera-Sensor für Außenaufnahmen optimieren ───────
+  // ─────── Kamera-Sensor für helles Tageslicht optimieren ───────
   sensor_t *s = esp_camera_sensor_get();
   if (s != NULL) {
-    // Automatische Belichtungskorrektur aktivieren
-    s->set_exposure_ctrl(s, 1);      // Auto-Exposure EIN
-    s->set_aec2(s, 1);               // Automatic Exposure Control 2 EIN
-    s->set_ae_level(s, -2);          // Belichtung stark reduzieren für helles Tageslicht
+    // MANUELLE Belichtungssteuerung für helles Tageslicht
+    s->set_exposure_ctrl(s, 0);      // Auto-Exposure AUS - manuell steuern
+    s->set_aec2(s, 0);               // Automatic Exposure Control 2 AUS
+    s->set_aec_value(s, 50);         // Sehr kurze Belichtungszeit (0-1200, niedriger = dunkler)
     
-    // Automatischer Weißabgleich
+    // MANUELLER Gain Control - minimal für helle Umgebung
+    s->set_gain_ctrl(s, 0);          // AGC AUS - manuell steuern
+    s->set_agc_gain(s, 0);           // Gain auf Minimum (0-30)
+    
+    // Weißabgleich kann automatisch bleiben
     s->set_whitebal(s, 1);           // AWB EIN
     s->set_awb_gain(s, 1);           // AWB Gain EIN
     
-    // Automatischer Gain Control - aggressiv für Außenaufnahmen
-    s->set_gain_ctrl(s, 1);          // AGC EIN
-    s->set_agc_gain(s, 0);           // AGC Gain minimal für helle Umgebung (0-30)
+    // Aggressive Bildparameter für Überbelichtungsschutz
+    s->set_brightness(s, -2);        // Helligkeit stark reduzieren
+    s->set_contrast(s, 2);           // Kontrast erhöhen für Details
+    s->set_saturation(s, -1);        // Sättigung leicht reduzieren
     
-    // Brightness und Contrast für Außenaufnahmen
-    s->set_brightness(s, -2);        // Helligkeit reduzieren
-    s->set_contrast(s, 2);           // Kontrast erhöhen für bessere Details
-    s->set_saturation(s, 0);         // Sättigung neutral
-    
-    // Spezielle Einstellungen gegen Überbelichtung
+    // Bildverbesserungen
     s->set_hmirror(s, 0);            // Horizontal mirror
     s->set_vflip(s, 0);              // Vertical flip
     s->set_lenc(s, 1);               // Lens correction EIN
     s->set_bpc(s, 1);                // Black pixel cancel EIN
     s->set_wpc(s, 1);                // White pixel cancel EIN
     s->set_raw_gma(s, 1);            // Gamma correction EIN
-    
-    // Zusätzliche Anti-Überbelichtungs-Einstellungen
-    s->set_aec_value(s, 100);        // Manuelle Belichtungszeit sehr kurz (0-1200)
     s->set_special_effect(s, 0);     // Kein Spezialeffekt
     
-    Serial.println(F("[Cam] Außenaufnahme-Optimierung aktiviert"));
+    Serial.println(F("[Cam] Manuelle Tageslicht-Optimierung aktiviert"));
   }
   
   return true;
