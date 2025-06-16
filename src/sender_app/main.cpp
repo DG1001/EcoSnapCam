@@ -170,23 +170,23 @@ static bool initCamera() {
   // ─────── Kamera-Sensor für helles Tageslicht optimieren ───────
   sensor_t *s = esp_camera_sensor_get();
   if (s != NULL) {
-    // MANUELLE Belichtungssteuerung für helles Tageslicht
+    // EXTREM KURZE Belichtungssteuerung für helles Tageslicht
     s->set_exposure_ctrl(s, 0);      // Auto-Exposure AUS - manuell steuern
     s->set_aec2(s, 0);               // Automatic Exposure Control 2 AUS
-    s->set_aec_value(s, 50);         // Sehr kurze Belichtungszeit (0-1200, niedriger = dunkler)
+    s->set_aec_value(s, 10);         // EXTREM kurze Belichtungszeit (0-1200, von 50 auf 10)
     
-    // MANUELLER Gain Control - minimal für helle Umgebung
+    // MANUELLER Gain Control - absolutes Minimum
     s->set_gain_ctrl(s, 0);          // AGC AUS - manuell steuern
-    s->set_agc_gain(s, 0);           // Gain auf Minimum (0-30)
+    s->set_agc_gain(s, 0);           // Gain auf absolutes Minimum (0-30)
     
-    // Weißabgleich kann automatisch bleiben
+    // Weißabgleich reduziert für weniger Verstärkung
     s->set_whitebal(s, 1);           // AWB EIN
-    s->set_awb_gain(s, 1);           // AWB Gain EIN
+    s->set_awb_gain(s, 0);           // AWB Gain AUS für weniger Verstärkung
     
-    // Aggressive Bildparameter für Überbelichtungsschutz
-    s->set_brightness(s, -2);        // Helligkeit stark reduzieren
-    s->set_contrast(s, 2);           // Kontrast erhöhen für Details
-    s->set_saturation(s, -1);        // Sättigung leicht reduzieren
+    // SEHR aggressive Bildparameter gegen Überbelichtung
+    s->set_brightness(s, -2);        // Helligkeit maximal reduzieren
+    s->set_contrast(s, 3);           // Kontrast noch höher für bessere Details
+    s->set_saturation(s, -2);        // Sättigung stärker reduzieren
     
     // Bildverbesserungen
     s->set_hmirror(s, 0);            // Horizontal mirror
