@@ -450,6 +450,9 @@ static bool sendJpeg(uint8_t* buf, size_t len, const char* url) {
   return rc >= 200 && rc < 300;
 }
 
+// Flash-LED Pin
+#define FLASH_LED_PIN 4
+
 static void goDeepSleep() {
   Serial.println(F("Deep‑Sleep Vorbereitung..."));
   Serial.flush();
@@ -469,6 +472,16 @@ static void goDeepSleep() {
   
   // Alle nicht benötigten Peripherie ausschalten
   disablePeripherals();
+  
+  // Kamera PWDN Pin auf HIGH setzen (Power Down)
+  pinMode(PWDN_GPIO_NUM, OUTPUT);
+  digitalWrite(PWDN_GPIO_NUM, HIGH);
+  Serial.println(F("[Power] Kamera PWDN auf HIGH gesetzt"));
+  
+  // Flash-LED Pin auf LOW setzen (aus)
+  pinMode(FLASH_LED_PIN, OUTPUT);
+  digitalWrite(FLASH_LED_PIN, LOW);
+  Serial.println(F("[Power] Flash-LED auf LOW gesetzt"));
   
   // Wakeup-Quellen konfigurieren
   esp_sleep_enable_timer_wakeup(SLEEP_USEC);
