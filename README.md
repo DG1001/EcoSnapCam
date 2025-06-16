@@ -175,6 +175,21 @@ build_flags =
 - **Stromverbrauch:** ~3mA im Deep Sleep (bei 3.3V Direkteinspeisung)
 - **Betriebsspannung:** 3.3V (ESP32-CAM)
 
+## Stromverbrauch und Hardware-Optimierung
+
+Der optimierte Deep-Sleep-Code erreicht einen Stromverbrauch von ca. **3mA im Deep Sleep** bei direkter 3.3V Einspeisung (AMS1117 Spannungsregler umgangen).
+
+**Wichtige Hinweise zum Stromverbrauch:**
+- Die 3mA wurden bei direkter Einspeisung von 3.3V an den 3.3V-Eingang gemessen
+- Dadurch wird der AMS1117 Spannungsregler umgangen, der allein ca. 1.5-5mA verbraucht
+- Geringere Werte sind aufgrund der Konstruktion des ESP32-CAM Moduls nur über Hardware-Änderungen möglich
+- Für weitere Details zur Hardware-Optimierung siehe: [How to decrease the deep-sleep current of ESP32-CAM](https://chiptron.eu/how-to-decrease-the-deep-sleep-current-of-esp32-cam/)
+
+**Hardware-Limitierungen:**
+- Die OV2640 Kamera ist permanent an 3.3V angeschlossen und verbraucht auch im Deep Sleep Strom
+- Die microSD-Karte (falls eingesteckt) verbraucht zusätzlich ca. 200µA
+- Ohne Kamera und SD-Karte wären theoretisch <1mA möglich, aber das würde die Funktionalität zunichte machen
+
 ## Fehlerbehebung
 
 **Kamera initialisiert nicht:**
