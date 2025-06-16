@@ -169,7 +169,7 @@ build_flags =
 
 - **Bildauflösung:** SVGA (800x600) JPEG
 - **Bildqualität:** Optimiert für Dateigröße und Übertragung
-- **Sleep-Zeit:** 5 Minuten (konfigurierbar)
+- **Sleep-Zeit:** 15 Minuten (konfigurierbar)
 - **Übertragungsarten:** HTTP/HTTPS POST, ESP-NOW
 - **ESP-NOW Reichweite:** Bis zu 200m (Sichtlinie)
 - **Stromverbrauch:** ~3mA im Deep Sleep (bei 3.3V Direkteinspeisung)
