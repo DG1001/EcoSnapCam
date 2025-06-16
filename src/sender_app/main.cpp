@@ -173,7 +173,7 @@ static bool initCamera() {
     // Automatische Belichtungskorrektur aktivieren
     s->set_exposure_ctrl(s, 1);      // Auto-Exposure EIN
     s->set_aec2(s, 1);               // Automatic Exposure Control 2 EIN
-    s->set_ae_level(s, -1);          // Belichtung etwas reduzieren (-2 bis +2)
+    s->set_ae_level(s, -2);          // Belichtung etwas reduzieren (-2 bis +2)
     
     // Automatischer Weißabgleich
     s->set_whitebal(s, 1);           // AWB EIN
@@ -184,7 +184,7 @@ static bool initCamera() {
     s->set_agc_gain(s, 10);          // AGC Gain etwas reduzieren (0-30)
     
     // Brightness und Contrast optimieren
-    s->set_brightness(s, 0);         // Helligkeit neutral (Standard)
+    s->set_brightness(s, -2);         // Helligkeit neutral (Standard)
     s->set_contrast(s, 0);           // Kontrast neutral
     s->set_saturation(s, 0);         // Sättigung neutral
     
@@ -372,8 +372,8 @@ void setup() {
     bt_initialized = true;
   }
   
-  // Sofort Power Management aktivieren
-  enableLowPowerMode();
+  // Sofort Power Management aktivieren; scheint instabil zu sein, deswegen aktuell deaktiviert
+  //enableLowPowerMode();
 
   printWakeReason();
   pinMode(PIR_PIN, INPUT_PULLDOWN);
@@ -383,11 +383,6 @@ void setup() {
   uint16_t v_mV = static_cast<uint16_t>(vbat * 1000 + 0.5f);
   Serial.printf("VBAT %.2f V\n", vbat);
   
-  // Low-Battery Schutz
-  if (vbat < 2.0f) {
-    Serial.println(F("Batterie zu schwach - Deep Sleep"));
-    //goDeepSleep();
-  }
 
   if (!initCamera()) {
     Serial.println(F("Cam init fail – Sleep"));
