@@ -200,12 +200,12 @@ static void optimizeCameraSettings(int brightness_level) {
     // Einstellungen für direktes Sonnenlicht
     s->set_exposure_ctrl(s, 0);      // Auto-Exposure AUS
     s->set_aec2(s, 0);               // AEC2 AUS
-    s->set_aec_value(s, 1);          // Extrem kurze Belichtung für Sonnenlicht
+    s->set_aec_value(s, 0);          // Minimale Belichtung (0 statt 1)
     s->set_gain_ctrl(s, 0);          // AGC AUS
     s->set_agc_gain(s, 0);           // Gain minimal
     s->set_awb_gain(s, 0);           // AWB Gain AUS
-    s->set_brightness(s, -3);        // Helligkeit stark reduzieren
-    s->set_contrast(s, 2);           // Kontrast erhöhen
+    s->set_brightness(s, -4);        // Helligkeit maximal reduzieren
+    s->set_contrast(s, 3);           // Kontrast stärker erhöhen
     s->set_saturation(s, -2);        // Sättigung reduzieren
     s->set_wb_mode(s, 0);            // Weißabgleich: Auto
     s->set_lenc(s, 1);               // Lens correction EIN
