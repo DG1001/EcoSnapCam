@@ -141,20 +141,30 @@ static float readVBat() {
 static bool analyzeImageBrightness(camera_fb_t* fb) {
   if (!fb || fb->len < 1000) return false; // Zu kleines Bild
   
-  // Einfache Helligkeitsanalyse: Zähle helle Pixel im JPEG
-  uint32_t bright_pixels = 0;
-  uint32_t sample_size = fb->len / 10; // 10% der Daten sampeln
+  // Verbesserte Helligkeitsanalyse: Suche nach JPEG-Markern für Überbelichtung
+  uint32_t very_bright_bytes = 0;
+  uint32_t bright_bytes = 0;
+  uint32_t sample_count = 0;
   
-  for (uint32_t i = 0; i < sample_size; i += 10) {
-    if (fb->buf[i] > 200) { // Helle Pixel (JPEG-Daten)
-      bright_pixels++;
+  // Sampele jeden 50. Byte für bessere Performance
+  for (uint32_t i = 100; i < fb->len - 100; i += 50) {
+    uint8_t byte_val = fb->buf[i];
+    sample_count++;
+    
+    if (byte_val >= 240) {        // Sehr helle Bereiche (Überbelichtung)
+      very_bright_bytes++;
+    } else if (byte_val >= 180) { // Helle Bereiche
+      bright_bytes++;
     }
   }
   
-  float brightness_ratio = (float)bright_pixels / (sample_size / 10);
-  Serial.printf("[Cam] Helligkeit-Ratio: %.3f\n", brightness_ratio);
+  float very_bright_ratio = (float)very_bright_bytes / sample_count;
+  float bright_ratio = (float)(bright_bytes + very_bright_bytes) / sample_count;
   
-  return brightness_ratio > 0.3; // > 30% helle Pixel = helle Umgebung
+  Serial.printf("[Cam] Sehr hell: %.3f, Hell: %.3f\n", very_bright_ratio, bright_ratio);
+  
+  // Helle Umgebung wenn viele sehr helle Pixel ODER sehr viele helle Pixel
+  return (very_bright_ratio > 0.15) || (bright_ratio > 0.6);
 }
 
 static void optimizeCameraSettings(bool bright_environment) {
@@ -228,19 +238,22 @@ static bool initCamera() {
   camera_initialized = true;
   Serial.println(F("[Cam] Initialisierung erfolgreich"));
   
-  // ─────── Standardeinstellungen für Helligkeitstest ───────
+  // ─────── Optimierte Einstellungen für Helligkeitstest ───────
   sensor_t *s = esp_camera_sensor_get();
   if (s != NULL) {
+    // Einstellungen die Überbelichtung vermeiden aber trotzdem Helligkeit erkennen
     s->set_exposure_ctrl(s, 1);      // Auto-Exposure EIN für Testbild
     s->set_aec2(s, 1);               // Automatic Exposure Control 2 EIN
+    s->set_ae_level(s, -1);          // Leicht reduzierte Belichtung für Test
     s->set_gain_ctrl(s, 1);          // AGC EIN für Testbild
+    s->set_agc_gain(s, 8);           // Moderater Gain für Test
     s->set_whitebal(s, 1);           // AWB EIN
     s->set_awb_gain(s, 1);           // AWB Gain EIN
     s->set_brightness(s, 0);         // Neutral für Test
     s->set_contrast(s, 0);           // Neutral für Test
     s->set_saturation(s, 0);         // Neutral für Test
     
-    Serial.println(F("[Cam] Standardeinstellungen für Helligkeitstest"));
+    Serial.println(F("[Cam] Optimierte Testeinstellungen"));
   }
   
   return true;
