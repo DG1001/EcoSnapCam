@@ -128,11 +128,27 @@ static float readVBat() {
     adc_initialized = true;
   }
   
+  // Pin als Eingang konfigurieren
+  pinMode(VBAT_PIN, INPUT);
+  
+  // ADC-Dämpfung auf 11dB setzen (für 0-3.3V Bereich)
   analogSetPinAttenuation(VBAT_PIN, ADC_11db);
-  uint16_t raw = analogRead(VBAT_PIN);
+  
+  // Mehrere Messungen für bessere Genauigkeit
+  const int samples = 5;
+  uint32_t sum = 0;
+  
+  for (int i = 0; i < samples; i++) {
+    sum += analogRead(VBAT_PIN);
+    delay(5); // Kurze Pause zwischen Messungen
+  }
+  
+  uint16_t raw = sum / samples;
   float v_adc = raw * 3.3f / 4095.0f;
   
   // ADC nicht sofort deaktivieren - wird in disablePeripherals() gemacht
+  
+  Serial.printf("[Power] ADC Rohwert: %u, Spannung: %.3fV\n", raw, v_adc);
   
   return v_adc;
 }
