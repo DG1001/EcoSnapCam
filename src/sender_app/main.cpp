@@ -398,7 +398,7 @@ void setup() {
   // Low-Battery Schutz
   if (vbat < 2.0f) {
     Serial.println(F("Batterie zu schwach - Deep Sleep"));
-    goDeepSleep();
+    //goDeepSleep();
   }
 
   if (!initCamera()) {
