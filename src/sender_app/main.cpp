@@ -17,6 +17,8 @@
 // Brown‑Out‑Detector und RTC deaktivieren
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
+#include "soc/timer_group_struct.h"
+#include "soc/timer_group_reg.h"
 
 // Deep‑Sleep‑Timer (5 min) in µs
 constexpr uint64_t SLEEP_USEC = 5ULL * 60ULL * 1000000ULL;
@@ -74,6 +76,23 @@ static void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 // ───────── Power Management Funktionen ─────────
 static void disablePeripherals() {
   Serial.println(F("[Power] Deaktiviere Peripherie..."));
+  Serial.flush(); // Sicherstellen dass Output gesendet wird
+  
+  // Watchdog Timer deaktivieren um Reset zu vermeiden
+  TIMERG0.wdt_wprotect=TIMG_WDT_WKEY_VALUE;
+  TIMERG0.wdt_config0.en = 0;
+  TIMERG0.wdt_wprotect=0;
+  
+  TIMERG1.wdt_wprotect=TIMG_WDT_WKEY_VALUE;
+  TIMERG1.wdt_config0.en = 0;
+  TIMERG1.wdt_wprotect=0;
+  
+  // ADC sicher ausschalten (zuerst, da schnell)
+  if (adc_initialized) {
+    adc_power_release();
+    adc_initialized = false;
+    Serial.println(F("[Power] ADC deaktiviert"));
+  }
   
   // Bluetooth sicher deaktivieren
   if (bt_initialized) {
@@ -85,13 +104,6 @@ static void disablePeripherals() {
     } else {
       Serial.printf("[Power] BT Deinit Fehler: %s\n", esp_err_to_name(bt_err));
     }
-  }
-  
-  // ADC sicher ausschalten
-  if (adc_initialized) {
-    adc_power_release();
-    adc_initialized = false;
-    Serial.println(F("[Power] ADC deaktiviert"));
   }
   
   // Nicht verwendete GPIOs als Input mit Pullup setzen
@@ -337,6 +349,16 @@ static bool sendJpeg(uint8_t* buf, size_t len, const char* url) {
 
 static void goDeepSleep() {
   Serial.println(F("Deep‑Sleep Vorbereitung..."));
+  Serial.flush();
+  
+  // Watchdog Timer sofort deaktivieren
+  TIMERG0.wdt_wprotect=TIMG_WDT_WKEY_VALUE;
+  TIMERG0.wdt_config0.en = 0;
+  TIMERG0.wdt_wprotect=0;
+  
+  TIMERG1.wdt_wprotect=TIMG_WDT_WKEY_VALUE;
+  TIMERG1.wdt_config0.en = 0;
+  TIMERG1.wdt_wprotect=0;
   
   // Kamera sicher deinitialisieren
   if (camera_initialized) {
@@ -344,8 +366,10 @@ static void goDeepSleep() {
     if (err == ESP_OK) {
       camera_initialized = false;
       Serial.println(F("[Power] Kamera deinitialisiert"));
+      Serial.flush();
     } else {
       Serial.printf("[Power] Kamera Deinit Fehler: %s\n", esp_err_to_name(err));
+      Serial.flush();
     }
   }
   
@@ -364,7 +388,7 @@ static void goDeepSleep() {
   
   Serial.println(F("Deep‑Sleep"));
   Serial.flush(); // Warten bis Serial ausgegeben wurde
-  delay(100);
+  delay(50); // Reduziert von 100ms
   
   esp_deep_sleep_start();
 }
