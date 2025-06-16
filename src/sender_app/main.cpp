@@ -78,20 +78,12 @@ static void disablePeripherals() {
   Serial.println(F("[Power] Deaktiviere Peripherie..."));
   Serial.flush(); // Sicherstellen dass Output gesendet wird
   
-  // Watchdog Timer deaktivieren um Reset zu vermeiden
-  TIMERG0.wdt_wprotect=TIMG_WDT_WKEY_VALUE;
-  TIMERG0.wdt_config0.en = 0;
-  TIMERG0.wdt_wprotect=0;
-  
-  TIMERG1.wdt_wprotect=TIMG_WDT_WKEY_VALUE;
-  TIMERG1.wdt_config0.en = 0;
-  TIMERG1.wdt_wprotect=0;
-  
-  // ADC sicher ausschalten (zuerst, da schnell)
+  // ADC sicher ausschalten
   if (adc_initialized) {
     adc_power_release();
     adc_initialized = false;
     Serial.println(F("[Power] ADC deaktiviert"));
+    Serial.flush();
   }
   
   // Bluetooth sicher deaktivieren
@@ -101,31 +93,15 @@ static void disablePeripherals() {
       esp_bt_mem_release(ESP_BT_MODE_BTDM);
       bt_initialized = false;
       Serial.println(F("[Power] Bluetooth deaktiviert"));
+      Serial.flush();
     } else {
       Serial.printf("[Power] BT Deinit Fehler: %s\n", esp_err_to_name(bt_err));
+      Serial.flush();
     }
   }
   
-  // Nicht verwendete GPIOs als Input mit Pullup setzen
-  // (verhindert floating pins = Stromverbrauch)
-  for (int gpio = 0; gpio <= 39; gpio++) {
-    // Skip bereits verwendete Pins
-    if (gpio == PIR_PIN || gpio == VBAT_PIN || 
-        gpio == PWDN_GPIO_NUM || gpio == XCLK_GPIO_NUM ||
-        gpio == SIOD_GPIO_NUM || gpio == SIOC_GPIO_NUM ||
-        gpio == Y9_GPIO_NUM || gpio == Y8_GPIO_NUM || gpio == Y7_GPIO_NUM ||
-        gpio == Y6_GPIO_NUM || gpio == Y5_GPIO_NUM || gpio == Y4_GPIO_NUM ||
-        gpio == Y3_GPIO_NUM || gpio == Y2_GPIO_NUM || gpio == VSYNC_GPIO_NUM ||
-        gpio == HREF_GPIO_NUM || gpio == PCLK_GPIO_NUM) {
-      continue;
-    }
-    
-    // Nur gültige GPIO Pins konfigurieren
-    if (GPIO_IS_VALID_GPIO(gpio)) {
-      pinMode(gpio, INPUT_PULLUP);
-    }
-  }
-  Serial.println(F("[Power] GPIOs konfiguriert"));
+  Serial.println(F("[Power] Peripherie deaktiviert"));
+  Serial.flush();
 }
 
 static void enableLowPowerMode() {
@@ -351,15 +327,6 @@ static void goDeepSleep() {
   Serial.println(F("Deep‑Sleep Vorbereitung..."));
   Serial.flush();
   
-  // Watchdog Timer sofort deaktivieren
-  TIMERG0.wdt_wprotect=TIMG_WDT_WKEY_VALUE;
-  TIMERG0.wdt_config0.en = 0;
-  TIMERG0.wdt_wprotect=0;
-  
-  TIMERG1.wdt_wprotect=TIMG_WDT_WKEY_VALUE;
-  TIMERG1.wdt_config0.en = 0;
-  TIMERG1.wdt_wprotect=0;
-  
   // Kamera sicher deinitialisieren
   if (camera_initialized) {
     esp_err_t err = esp_camera_deinit();
@@ -376,19 +343,13 @@ static void goDeepSleep() {
   // Alle nicht benötigten Peripherie ausschalten
   disablePeripherals();
   
-  // Wakeup-Quellen konfigurieren BEVOR wir Power-Domains konfigurieren
+  // Wakeup-Quellen konfigurieren
   esp_sleep_enable_timer_wakeup(SLEEP_USEC);
   esp_sleep_enable_ext0_wakeup(PIR_PIN, 1);
   
-  // RTC Peripherie muss aktiv bleiben für ext0 wakeup
-  // RTC_SLOW_MEM muss aktiv bleiben für Timer wakeup
-  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_SLOW_MEM, ESP_PD_OPTION_ON);
-  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_FAST_MEM, ESP_PD_OPTION_OFF);
-  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
-  
-  Serial.println(F("Deep‑Sleep"));
-  Serial.flush(); // Warten bis Serial ausgegeben wurde
-  delay(50); // Reduziert von 100ms
+  Serial.println(F("Deep‑Sleep starten..."));
+  Serial.flush();
+  delay(100); // Etwas mehr Zeit für Serial Output
   
   esp_deep_sleep_start();
 }
