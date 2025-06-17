@@ -28,7 +28,6 @@ static constexpr gpio_num_t PIR_PIN  = GPIO_NUM_13;
 static constexpr int        VBAT_PIN = 14;
 
 // Globale Flags für saubere Deinitialisierung
-static bool adc_initialized = false;
 static bool camera_initialized = false;
 static bool bt_initialized = false;
 
@@ -78,14 +77,6 @@ static void disablePeripherals() {
   Serial.println(F("[Power] Deaktiviere Peripherie..."));
   Serial.flush(); // Sicherstellen dass Output gesendet wird
   
-  // ADC sicher ausschalten
-  if (adc_initialized) {
-    adc_power_release();
-    adc_initialized = false;
-    Serial.println(F("[Power] ADC deaktiviert"));
-    Serial.flush();
-  }
-  
   // Bluetooth sicher deaktivieren
   if (bt_initialized) {
     esp_err_t bt_err = esp_bt_controller_deinit();
@@ -122,17 +113,9 @@ static void printWakeReason() {
 }
 
 static float readVBat() {
-  // ADC für Messung sicher aktivieren
-  if (!adc_initialized) {
-    adc_power_acquire();
-    adc_initialized = true;
-  }
-  
-  // Pin als Eingang konfigurieren
-  pinMode(VBAT_PIN, INPUT);
-  
   // ADC-Dämpfung auf 11dB setzen (für 0-3.3V Bereich)
   analogSetPinAttenuation(VBAT_PIN, ADC_11db);
+  analogReadResolution(12); // 12-Bit Auflösung (0-4095)
   
   // Mehrere Messungen für bessere Genauigkeit
   const int samples = 5;
@@ -144,7 +127,7 @@ static float readVBat() {
   }
   
   uint16_t raw = sum / samples;
-  float v_adc = raw * 3.3f / 4095.0f;
+  float v_adc = raw * 3.3f / 4095.0f * 2.0f; // 2.0f für Spannungsteiler 100kohm/100kohm
   
   // ADC nicht sofort deaktivieren - wird in disablePeripherals() gemacht
   
@@ -384,7 +367,6 @@ void setup() {
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
   
   // Initialisierungsflags zurücksetzen
-  adc_initialized = false;
   camera_initialized = false;
   bt_initialized = false;
   
