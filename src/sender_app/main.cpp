@@ -585,17 +585,32 @@ void setup() {
     Serial.println(F("WiFi fail – Sleep"));
   } else {
     if (camera_fb_t* fb = esp_camera_fb_get()) {
+        // Take 3 dummy captures to allow sensor to adjust
+        for (int i = 0; i < 3; i++) {
+        esp_camera_fb_return(fb);
+        fb = esp_camera_fb_get();
+            if (!fb) {
+                Serial.println(F("Dummy capture fehlgeschlagen"));
+                break;
+            }
+        }
+
+        // Proceed only if we still have a valid frame buffer
+        if (fb) {
         char url_buffer[256];
         snprintf(url_buffer, sizeof(url_buffer), "%s?vbat=%u", serverURL, v_mV);
         uploadSuccess = sendJpeg(fb->buf, fb->len, url_buffer);
         esp_camera_fb_return(fb);
     } else {
-        Serial.println(F("Foto capture fehlgeschlagen"));
+            Serial.println(F("Final photo capture fehlgeschlagen"));
     }
+    } else {
+        Serial.println(F("Initial camera capture fehlgeschlagen"));
+  }
     WiFi.disconnect(true);
     Serial.println(F("WiFi getrennt."));
   }
-#endif
+  #endif
 
   if (uploadSuccess) {
     Serial.println(F("Bild-Upload erfolgreich abgeschlossen."));
