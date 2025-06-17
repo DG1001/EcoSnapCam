@@ -434,36 +434,45 @@ void setup() {
   }
 #else
   Serial.println(F("[Main] HTTP Upload ausgewählt."));
-  if (!wifiConnect()) {
-    Serial.println(F("WiFi fail – Sleep"));
-  } else {
-    if (camera_fb_t* fb = esp_camera_fb_get()) {
-        // Take 3 dummy captures to allow sensor to adjust
-        for (int i = 0; i < 3; i++) {
-        esp_camera_fb_return(fb);
-        fb = esp_camera_fb_get();
-            if (!fb) {
-                Serial.println(F("Dummy capture fehlgeschlagen"));
-                break;
-            }
-        }
+  camera_fb_t* fb = esp_camera_fb_get(); // Erste Aufnahme vor WiFi-Verbindung
 
-        // Proceed only if we still have a valid frame buffer
-        if (fb) {
+  if (!fb) {
+    Serial.println(F("Initial camera capture fehlgeschlagen"));
+    // uploadSuccess bleibt false
+  } else {
+    // Dummy-Aufnahmen zur Sensoranpassung
+    Serial.println(F("[Cam] Mache Dummy-Aufnahmen zur Belichtungsanpassung..."));
+    for (int i = 0; i < 3; i++) {
+      esp_camera_fb_return(fb); // Vorherigen Framebuffer freigeben
+      fb = esp_camera_fb_get();
+      if (!fb) {
+        Serial.printf("[Cam] Dummy capture %d fehlgeschlagen\n", i + 1);
+        break; 
+      }
+      delay(50); // Kurze Pause zwischen Dummy-Aufnahmen
+    }
+
+    if (!fb) {
+      Serial.println(F("[Cam] Finale Aufnahme nach Dummies fehlgeschlagen"));
+      // uploadSuccess bleibt false, fb ist bereits NULL oder wurde freigegeben
+    } else {
+      Serial.println(F("[Cam] Finale Aufnahme erfolgreich erstellt."));
+      if (!wifiConnect()) {
+        Serial.println(F("WiFi fail – Sleep"));
+        esp_camera_fb_return(fb); // Framebuffer freigeben, da nicht gesendet
+        // uploadSuccess bleibt false
+      } else {
         char url_buffer[256];
         snprintf(url_buffer, sizeof(url_buffer), "%s?vbat=%u", serverURL, v_mV);
         uploadSuccess = sendJpeg(fb->buf, fb->len, url_buffer);
-        esp_camera_fb_return(fb);
-    } else {
-            Serial.println(F("Final photo capture fehlgeschlagen"));
+        esp_camera_fb_return(fb); // Framebuffer nach dem Senden freigeben
+        
+        WiFi.disconnect(true);
+        Serial.println(F("WiFi getrennt."));
+      }
     }
-    } else {
-        Serial.println(F("Initial camera capture fehlgeschlagen"));
   }
-    WiFi.disconnect(true);
-    Serial.println(F("WiFi getrennt."));
-  }
-  #endif
+#endif
 
   if (uploadSuccess) {
     Serial.println(F("Bild-Upload erfolgreich abgeschlossen."));
