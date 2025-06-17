@@ -7,7 +7,6 @@ Unterstützt Bildübertragung via HTTP/HTTPS oder ESP-NOW an einen dedizierten E
 
 ## Funktionen
 
-- **Adaptive Kameraeinstellungen**: Automatische Erkennung von Innen- und Außenumgebungen für optimale Bildqualität
 - **Energieeffizient**: Deep Sleep zwischen Aufnahmen mit optimiertem Power Management
 - **Flexible Übertragung**: Bildversendung per HTTP/HTTPS POST oder ESP-NOW
 - **Bewegungserkennung**: PIR-Sensor für zusätzliche bewegungsaktivierte Aufnahmen
@@ -77,6 +76,8 @@ pio run -e espnow_receiver -t upload
 
 ### Sender-Konfiguration (`src/sender_app/config.h`)
 
+Die Hauptkonfiguration erfolgt in `src/sender_app/config.h`. Hier legen Sie WLAN-Zugangsdaten, Server-URL und den Übertragungsmodus (HTTP oder ESP-NOW) fest.
+
 **HTTP/HTTPS Upload (Standard):**
 ```cpp
 // WiFi Zugangsdaten
@@ -100,9 +101,10 @@ const char* serverURL = "http://DEIN_SERVER.DE/upload.php";
 static uint8_t espNowReceiverMac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 // WLAN-Kanal (muss mit Empfänger übereinstimmen)
-#define ESP_NOW_CHANNEL 1
+#define ESP_NOW_CHANNEL 1 // Standardmäßig Kanal 1
 #endif
 ```
+Die Kamera verwendet nun automatische Belichtungseinstellungen. Die vorherige `EXPOSURE_MODE` Einstellung wurde entfernt.
 
 ### Empfänger-Konfiguration
 
@@ -140,14 +142,12 @@ build_flags =
 - Anzeige auf Empfänger-Display bei ESP-NOW
 - **Wichtig:** Spannungsteiler verwenden wenn Batteriespannung > 3.3V
 
-**Adaptive Kameraeinstellungen:**
-- Automatische Erkennung von Innen-/Außenumgebungen
-- Optimierte Belichtung für helles Tageslicht (draußen)
-- Ausgewogene Einstellungen für Innenräume
-- Verhindert Überbelichtung bei Sonnenschein
+**Kameraeinstellungen:**
+- Die Kamera verwendet automatische Belichtungs- und Weißabgleichseinstellungen.
+- Vor der eigentlichen Aufnahme (im HTTP-Modus) werden einige Dummy-Aufnahmen gemacht, damit sich der Sensor an die Lichtverhältnisse anpassen kann. Dies verbessert die Bildqualität bei schwierigen Lichtbedingungen.
 
 **Power Management:**
-- Deep Sleep zwischen Aufnahmen (Standard: 5 Minuten)
+- Deep Sleep zwischen Aufnahmen (Standard: 15 Minuten)
 - Automatische Deaktivierung nicht benötigter Peripherie
 - Optimierte WiFi Power Save Modi
 - Reduzierte CPU-Frequenz während Upload
@@ -202,10 +202,10 @@ Der optimierte Deep-Sleep-Code erreicht einen Stromverbrauch von ca. **3mA im De
 - WiFi-Signal am Aufstellort testen
 - 2.4GHz WLAN verwenden (nicht 5GHz)
 
-**Bilder überbelichtet:**
-- Adaptive Einstellungen sollten automatisch korrigieren
-- Bei Problemen: Kamera neu positionieren
-- Testaufnahmen bei verschiedenen Lichtverhältnissen
+**Bilder überbelichtet/unterbelichtet:**
+- Die Kamera nutzt nun eine automatische Belichtung mit initialen Dummy-Aufnahmen zur Anpassung. Dies sollte die meisten Probleme beheben.
+- Stellen Sie sicher, dass die Kameralinse sauber ist.
+- Bei extremen Lichtverhältnissen (z.B. direkte Sonneneinstrahlung in die Linse) kann es weiterhin zu Qualitätseinbußen kommen.
 
 **ESP-NOW funktioniert nicht:**
 - Kanal-Einstellungen zwischen Sender und Empfänger prüfen

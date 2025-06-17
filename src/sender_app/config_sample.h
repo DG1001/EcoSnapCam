@@ -1,15 +1,6 @@
 #ifndef CONFIG_SAMPLE_H
 #define CONFIG_SAMPLE_H
 
-// ---------------- Kamera-Einstellungen ----------------
-// Belichtungsmodus für die Kamera
-// 0 = Automatisch (basierend auf Umgebungshelligkeit)
-// 1 = Immer dunkel (Innenraum-Einstellungen)
-// 2 = Immer hell (Tageslicht-Einstellungen)
-// 3 = Immer sehr hell (Sonnenlicht-Einstellungen)
-// 4 = Kamera-Automatik (Auto-Belichtung und Auto-Weißabgleich)
-#define EXPOSURE_MODE 0
-
 // ---------------- HTTP/HTTPS Upload (Standard) ----------------
 // WiFi Zugangsdaten
 const char* ssid = "DEIN_WLAN_SSID";          // Tragen Sie hier Ihren WLAN-Namen ein
