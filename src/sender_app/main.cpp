@@ -154,7 +154,7 @@ static float readVBat() {
 }
 
 // Helligkeitsanalyse basierend auf JPEG-Dateigröße und Sensor-Werten
-static bool analyzeEnvironmentBrightness() {
+static int analyzeEnvironmentBrightness() {
   sensor_t *s = esp_camera_sensor_get();
   if (s == NULL) return false;
   
