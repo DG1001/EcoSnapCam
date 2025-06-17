@@ -140,7 +140,7 @@ build_flags =
 - Automatische Spannungsmessung bei jedem Aufwachen
 - Übertragung als GET-Parameter (`?vbat=XXXX`) bei HTTP-Upload
 - Anzeige auf Empfänger-Display bei ESP-NOW
-- **Wichtig:** Spannungsteiler verwenden wenn Batteriespannung > 3.3V
+- **Wichtig:** Spannungsteiler verwenden: VCC (3.3V pin) → 100kΩ → GPIO14 → 100kΩ → GND.
 
 **Kameraeinstellungen:**
 - Die Kamera verwendet automatische Belichtungs- und Weißabgleichseinstellungen.
