@@ -18,8 +18,8 @@ Unterstützt Bildübertragung via HTTP/HTTPS oder ESP-NOW an einen dedizierten E
 ## Hardware Voraussetzungen
 
 **Sender (Kamera-Einheit):**
-- ESP32-CAM Modul (AI-Thinker)
-- FTDI Programmer oder ähnliches für USB-Serial Programmierung
+- ESP32-CAM Modul (AI-Thinker), [Schematic ESP32-CAM](https://github.com/SeeedDocument/forum_doc/blob/master/reg/ESP32_CAM_V1.6.pdf)
+- FTDI Programmer oder ähnliches für USB-Serial Programmierung, z.B.: [ESP32-CAM-MB](https://www.espboards.dev/blog/flash-any-esp32-with-esp32-cam-mb/)
 - Stromversorgung (Batterie, Solar, etc.)
 - **PIR-Sensor** für bewegungsaktivierte Aufnahmen (Standard: GPIO13)
 - **Spannungsteiler** für Batteriespannungsmessung (Standard: GPIO14)
@@ -184,6 +184,7 @@ Der optimierte Deep-Sleep-Code erreicht einen Stromverbrauch von ca. **3mA im De
 - Dadurch wird der AMS1117 Spannungsregler umgangen, der allein ca. 1.5-5mA verbraucht
 - Geringere Werte sind aufgrund der Konstruktion des ESP32-CAM Moduls nur über Hardware-Änderungen möglich
 - Für weitere Details zur Hardware-Optimierung siehe: [How to decrease the deep-sleep current of ESP32-CAM](https://chiptron.eu/how-to-decrease-the-deep-sleep-current-of-esp32-cam/)
+
 
 **Hardware-Limitierungen:**
 - Die OV2640 Kamera ist permanent an 3.3V angeschlossen und verbraucht auch im Deep Sleep Strom
