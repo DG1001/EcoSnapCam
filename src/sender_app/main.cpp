@@ -95,6 +95,24 @@ static void disablePeripherals() {
   Serial.flush();
 }
 
+static String getEspIdString() {
+  uint8_t mac[6];
+  esp_efuse_mac_get_default(mac);
+  char id_str[13];
+  sprintf(id_str, "%02X%02X%02X%02X%02X%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  return String(id_str);
+}
+
+static String getWakeupReasonString() {
+  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+  switch (wakeup_reason) {
+    case ESP_SLEEP_WAKEUP_TIMER: return "TIMER";
+    case ESP_SLEEP_WAKEUP_EXT0:  return "PIR";
+    // ESP_SLEEP_WAKEUP_EXT1 wird hier nicht verwendet
+    default:                     return "POWERON"; // Oder anderer Reset-Grund
+  }
+}
+
 static void enableLowPowerMode() {
   // CPU Frequenz reduzieren für Upload-Phase
   setCpuFrequencyMhz(80);  // Von 240MHz auf 80MHz
@@ -444,8 +462,11 @@ void setup() {
         esp_camera_fb_return(fb); // Framebuffer freigeben, da nicht gesendet
         // uploadSuccess bleibt false
       } else {
-        char url_buffer[256];
-        snprintf(url_buffer, sizeof(url_buffer), "%s?vbat=%u", serverURL, v_mV);
+        String esp_id = getEspIdString();
+        String wake_reason = getWakeupReasonString();
+        char url_buffer[350]; // Puffer vergrößert für zusätzliche Parameter
+        snprintf(url_buffer, sizeof(url_buffer), "%s?vbat=%u&esp_id=%s&wake_reason=%s", 
+                 serverURL, v_mV, esp_id.c_str(), wake_reason.c_str());
         uploadSuccess = sendJpeg(fb->buf, fb->len, url_buffer);
         esp_camera_fb_return(fb); // Framebuffer nach dem Senden freigeben
         
