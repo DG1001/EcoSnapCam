@@ -373,6 +373,13 @@ static void goDeepSleep() {
   Serial.flush();
   delay(100); // Etwas mehr Zeit für Serial Output
   
+  // Neue Überprüfung: Warte, falls PIR-Pin HIGH ist
+  unsigned long startWait = millis();
+  while (digitalRead(PIR_PIN) == HIGH && (millis() - startWait < 2000)) {
+    Serial.println(F("[PIR] Warten auf LOW..."));
+    delay(100);  // Warte 100 ms pro Schleifendurchlauf
+  }
+  
   esp_deep_sleep_start();
 }
 
