@@ -189,7 +189,7 @@ static bool initCamera() {
   if (s != NULL) {
     s->set_exposure_ctrl(s, 1); // Auto-Exposure EIN
     s->set_aec2(s, 1);          // Automatic Exposure Control 2 EIN
-    s->set_ae_level(s, 0);      // Neutrale Belichtungskorrektur
+    s->set_ae_level(s, -1);      // AEC Level auf -1 setzen (leicht dunkler)
     s->set_gain_ctrl(s, 1);     // Auto Gain Control EIN
     s->set_agc_gain(s, 0);      // AGC Gain (0-30), wird automatisch angepasst
     s->set_whitebal(s, 1);      // Auto White Balance EIN
@@ -449,14 +449,14 @@ void setup() {
   } else {
     // Dummy-Aufnahmen zur Sensoranpassung
     Serial.println(F("[Cam] Mache Dummy-Aufnahmen zur Belichtungsanpassung..."));
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 6; i++) {
       esp_camera_fb_return(fb); // Vorherigen Framebuffer freigeben
       fb = esp_camera_fb_get();
       if (!fb) {
         Serial.printf("[Cam] Dummy capture %d fehlgeschlagen\n", i + 1);
         break; 
       }
-      delay(50); // Kurze Pause zwischen Dummy-Aufnahmen
+      delay(40); // Kurze Pause zwischen Dummy-Aufnahmen
     }
 
     if (!fb) {
