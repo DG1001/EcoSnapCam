@@ -84,12 +84,50 @@ write_log("GET-Request wird bearbeitet (HTML-Seite wird angezeigt).");
 
 // Funktion zum Extrahieren von Metadaten für Filter
 function get_metadata_from_filename($filename) {
-    // YYYYMMDD-HHMMSS_espid_wakereason_vbatXXXXmV.jpg
+    // Original regex: YYYYMMDD-HHMMSS_espid_wakereason_vbatXXXXmV.jpg
+    // $matches[1]: timestamp, $matches[2]: potenziell esp_id, $matches[3]: potenziell wake_reason, $matches[4]: optionaler vbat_teil
     if (preg_match('/^(\d{8}-\d{6})_([a-zA-Z0-9_-]+)_([a-zA-Z0-9_-]+)(_vbat\d+mV)?\.jpg$/', basename($filename), $matches)) {
+        $timestamp_short = $matches[1];
+        $field2_from_regex = $matches[2]; // Das, was Regex als ESP-ID interpretiert
+        $field3_from_regex = $matches[3]; // Das, was Regex als Aufwachgrund interpretiert
+
+        $final_esp_id = $field2_from_regex;
+        $final_wake_reason = $field3_from_regex; // Standardmäßig die ursprüngliche Interpretation
+
+        // Szenario 1: field2_from_regex ist im Format "HEXID_GRUNDTEXT" (z.B. "AABBCC_TIMER")
+        // Dies würde bedeuten, dass die Geräte-ID und der Aufwachgrund fälschlicherweise zusammengefasst wurden.
+        if (preg_match('/^([0-9a-fA-F]+)_([a-zA-Z]+)$/i', $field2_from_regex, $split_field2_matches)) {
+            // $field2_from_regex war tatsächlich "HEXID_GRUNDTEXT"
+            $final_esp_id = $split_field2_matches[1];    // Der korrekte HEXID-Teil
+            $final_wake_reason = $split_field2_matches[2]; // Der korrekte GRUNDTEXT-Teil
+            // In diesem Fall ist $field3_from_regex (der ursprüngliche Aufwachgrund-Match) wahrscheinlich irrelevant oder fehlerhaft
+            // und wird durch den Grund aus dem Split ersetzt.
+        } else {
+            // Szenario 2: field2_from_regex ist eine einfache ID (kein Underscore im kritischen Format).
+            // Prüfe nun, ob $field3_from_regex (der ursprüngliche Aufwachgrund-Match) gültig ist.
+            $valid_wake_reasons = ['TIMER', 'PIR', 'POWERON'];
+            // Vergleiche case-insensitiv, falls die Gründe mal klein geschrieben wurden.
+            $is_valid_reason = false;
+            foreach ($valid_wake_reasons as $valid_reason) {
+                if (strcasecmp($final_wake_reason, $valid_reason) == 0) {
+                    $is_valid_reason = true;
+                    $final_wake_reason = $valid_reason; // Normalisiere auf Großbuchstaben falls nötig
+                    break;
+                }
+            }
+
+            if (!$is_valid_reason) {
+                // $final_wake_reason (ursprünglich $field3_from_regex) ist kein Standard-Aufwachgrund.
+                // Dies könnte der Fall sein, wenn hier z.B. "vbatXXXXmV" steht.
+                // Setze für Filterzwecke auf einen speziellen Wert.
+                $final_wake_reason = 'UNKNOWN';
+            }
+        }
+
         return [
-            'timestamp_short' => $matches[1], // YYYYMMDD-HHMMSS
-            'esp_id' => $matches[2],
-            'wake_reason' => $matches[3]
+            'timestamp_short' => $timestamp_short,
+            'esp_id' => $final_esp_id,
+            'wake_reason' => $final_wake_reason
         ];
     }
     return null;
