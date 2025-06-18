@@ -50,10 +50,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     write_log("Bilddaten empfangen. Größe: " . strlen($imageData) . " Bytes.");
 
-    // Dateiname generieren (Zeitstempel + optional vbat)
-    $timestamp = time();
+    // Dateiname generieren (YYYYMMDD-HHMMSS_espid_wakereason_vbatXXXXmV.jpg)
+    $timestampFormatted = date('Ymd-His'); // Format: YYYYMMDD-HHMMSS
+    $espId = isset($_GET['esp_id']) ? preg_replace('/[^a-zA-Z0-9_-]/', '', $_GET['esp_id']) : 'unknownID';
+    $wakeReason = isset($_GET['wake_reason']) ? preg_replace('/[^a-zA-Z0-9_-]/', '', $_GET['wake_reason']) : 'unknownReason';
     $vbat = isset($_GET['vbat']) ? (int)$_GET['vbat'] : null;
-    $filename = $timestamp;
+
+    $filename = $timestampFormatted;
+    $filename .= '_' . $espId;
+    $filename .= '_' . $wakeReason;
     if ($vbat !== null) {
         $filename .= '_vbat' . $vbat . 'mV';
     }
@@ -175,15 +180,20 @@ write_log("GET-Request wird bearbeitet (HTML-Seite wird angezeigt).");
             array_multisort(array_map('filemtime', $files), SORT_DESC, $files);
             foreach ($files as $file) {
                 $fileName = basename($file);
-                $fileTimestamp = filemtime($file); // Unix-Timestamp der Dateiänderung
-                // Versuche, den Timestamp aus dem Dateinamen zu extrahieren, falls vorhanden (für Original-Aufnahmezeit)
-                if (preg_match('/^(\d+)(_vbat\d+mV)?\.jpg$/', $fileName, $matches)) {
-                    $fileTimestamp = (int)$matches[1];
+                $formattedDate = '';
+
+                // Versuche, den Zeitstempel aus dem neuen Dateinamenformat zu extrahieren
+                // Format: YYYYMMDD-HHMMSS_espid_wakereason_vbatXXXXmV.jpg
+                if (preg_match('/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})_.*\.jpg$/', $fileName, $matches)) {
+                    // $matches[1]=YYYY, $matches[2]=MM, $matches[3]=DD, $matches[4]=HH, $matches[5]=MM, $matches[6]=SS
+                    $formattedDate = "{$matches[3]}.{$matches[2]}.{$matches[1]} {$matches[4]}:{$matches[5]}:{$matches[6]}";
+                } else {
+                    // Fallback auf Dateiänderungsdatum, falls das Namensmuster nicht passt
+                    $fileModTime = filemtime($file);
+                    $formattedDate = date('d.m.Y H:i:s', $fileModTime);
                 }
-                $formattedDate = date('d.m.Y H:i:s', $fileTimestamp);
 
                 echo '<div class="image-container">';
-                // Entferne den <a>-Tag, da der Klick vom JavaScript gehandhabt wird
                 echo '<img src="' . htmlspecialchars($file) . '" alt="' . htmlspecialchars($fileName) . '" title="Klicken zum Vergrößern: ' . htmlspecialchars($fileName) . '" onclick="openModal(this)">';
                 echo '<p>' . htmlspecialchars($fileName) . '</p>';
                 echo '<p class="timestamp">' . $formattedDate . '</p>';
