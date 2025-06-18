@@ -81,6 +81,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 write_log("GET-Request wird bearbeitet (HTML-Seite wird angezeigt).");
+
+// Funktion zum Extrahieren von Metadaten für Filter
+function get_metadata_from_filename($filename) {
+    // YYYYMMDD-HHMMSS_espid_wakereason_vbatXXXXmV.jpg
+    if (preg_match('/^(\d{8}-\d{6})_([a-zA-Z0-9_-]+)_([a-zA-Z0-9_-]+)(_vbat\d+mV)?\.jpg$/', basename($filename), $matches)) {
+        return [
+            'timestamp_short' => $matches[1], // YYYYMMDD-HHMMSS
+            'esp_id' => $matches[2],
+            'wake_reason' => $matches[3]
+        ];
+    }
+    return null;
+}
+
+$all_files = glob($uploadDir . '*.jpg');
+$esp_ids = [];
+$wake_reasons = [];
+
+if ($all_files) {
+    foreach ($all_files as $file) {
+        $metadata = get_metadata_from_filename($file);
+        if ($metadata) {
+            if (!in_array($metadata['esp_id'], $esp_ids)) {
+                $esp_ids[] = $metadata['esp_id'];
+            }
+            if (!in_array($metadata['wake_reason'], $wake_reasons)) {
+                $wake_reasons[] = $metadata['wake_reason'];
+            }
+        }
+    }
+    sort($esp_ids);
+    sort($wake_reasons);
+}
+
+// Filterwerte aus GET-Parametern holen
+$filter_esp_id = isset($_GET['filter_esp_id']) ? $_GET['filter_esp_id'] : '';
+$filter_wake_reason = isset($_GET['filter_wake_reason']) ? $_GET['filter_wake_reason'] : '';
+
+$files_to_display = [];
+if ($all_files) {
+    foreach ($all_files as $file) {
+        $metadata = get_metadata_from_filename($file);
+        if ($metadata) {
+            $match_esp_id = empty($filter_esp_id) || $metadata['esp_id'] === $filter_esp_id;
+            $match_wake_reason = empty($filter_wake_reason) || $metadata['wake_reason'] === $filter_wake_reason;
+
+            if ($match_esp_id && $match_wake_reason) {
+                $files_to_display[] = $file;
+            }
+        } else { // Fallback für alte Dateinamen oder nicht passende Muster
+            if(empty($filter_esp_id) && empty($filter_wake_reason)) {
+                 $files_to_display[] = $file; // Nur anzeigen, wenn keine Filter aktiv sind
+            }
+        }
+    }
+    // Sortiere gefilterte Dateien nach Änderungsdatum (neueste zuerst)
+    if (!empty($files_to_display)) {
+        array_multisort(array_map('filemtime', $files_to_display), SORT_DESC, $files_to_display);
+    }
+}
+
+
 // Behandlung von GET-Requests (Bilder anzeigen)
 ?>
 <!DOCTYPE html>
@@ -172,35 +234,62 @@ write_log("GET-Request wird bearbeitet (HTML-Seite wird angezeigt).");
         <div id="captionModal" class="modal-caption"></div>
     </div>
     <h1>EcoSnapCam - Gespeicherte Bilder</h1>
+
+    <form method="GET" action="" style="text-align: center; margin-bottom: 20px;">
+        <label for="filter_esp_id">Geräte-ID:</label>
+        <select name="filter_esp_id" id="filter_esp_id" onchange="this.form.submit()">
+            <option value="">Alle Geräte</option>
+            <?php foreach ($esp_ids as $id): ?>
+                <option value="<?php echo htmlspecialchars($id); ?>" <?php if ($id === $filter_esp_id) echo 'selected'; ?>>
+                    <?php echo htmlspecialchars($id); ?>
+                </option>
+            <?php endforeach; ?>
+        </select>
+
+        <label for="filter_wake_reason" style="margin-left: 15px;">Aufwachgrund:</label>
+        <select name="filter_wake_reason" id="filter_wake_reason" onchange="this.form.submit()">
+            <option value="">Alle Gründe</option>
+            <?php foreach ($wake_reasons as $reason): ?>
+                <option value="<?php echo htmlspecialchars($reason); ?>" <?php if ($reason === $filter_wake_reason) echo 'selected'; ?>>
+                    <?php echo htmlspecialchars($reason); ?>
+                </option>
+            <?php endforeach; ?>
+        </select>
+        <noscript><button type="submit" style="margin-left: 10px;">Filtern</button></noscript>
+    </form>
+
     <div class="gallery">
         <?php
-        $files = glob($uploadDir . '*.jpg');
-        if ($files && count($files) > 0) {
-            // Sortiere Dateien nach Änderungsdatum (neueste zuerst)
-            array_multisort(array_map('filemtime', $files), SORT_DESC, $files);
-            foreach ($files as $file) {
-                $fileName = basename($file);
+        if (!empty($files_to_display)) {
+            foreach ($files_to_display as $file) {
+                $fullFileName = basename($file);
+                $metadata = get_metadata_from_filename($fullFileName);
+                $displayFileName = $fullFileName; // Fallback
                 $formattedDate = '';
 
-                // Versuche, den Zeitstempel aus dem neuen Dateinamenformat zu extrahieren
-                // Format: YYYYMMDD-HHMMSS_espid_wakereason_vbatXXXXmV.jpg
-                if (preg_match('/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})_.*\.jpg$/', $fileName, $matches)) {
-                    // $matches[1]=YYYY, $matches[2]=MM, $matches[3]=DD, $matches[4]=HH, $matches[5]=MM, $matches[6]=SS
-                    $formattedDate = "{$matches[3]}.{$matches[2]}.{$matches[1]} {$matches[4]}:{$matches[5]}:{$matches[6]}";
+                if ($metadata) {
+                    // Gekürzter Dateiname für die Galerieansicht (nur Zeitstempel)
+                    $displayFileName = $metadata['timestamp_short']; 
+                    // Formatieren des Datums für die Anzeige
+                    if (preg_match('/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/', $metadata['timestamp_short'], $dateMatches)) {
+                         $formattedDate = "{$dateMatches[3]}.{$dateMatches[2]}.{$dateMatches[1]} {$dateMatches[4]}:{$dateMatches[5]}:{$dateMatches[6]}";
+                    }
                 } else {
-                    // Fallback auf Dateiänderungsdatum, falls das Namensmuster nicht passt
+                     // Fallback für alte Dateinamen oder nicht passende Muster
                     $fileModTime = filemtime($file);
                     $formattedDate = date('d.m.Y H:i:s', $fileModTime);
                 }
 
                 echo '<div class="image-container">';
-                echo '<img src="' . htmlspecialchars($file) . '" alt="' . htmlspecialchars($fileName) . '" title="Klicken zum Vergrößern: ' . htmlspecialchars($fileName) . '" onclick="openModal(this)">';
-                echo '<p>' . htmlspecialchars($fileName) . '</p>';
+                // Der 'alt'-Tag enthält nun den vollen Dateinamen für das Modal
+                echo '<img src="' . htmlspecialchars($file) . '" alt="' . htmlspecialchars($fullFileName) . '" title="Klicken zum Vergrößern: ' . htmlspecialchars($fullFileName) . '" onclick="openModal(this)">';
+                // Angezeigt wird der gekürzte Dateiname
+                echo '<p title="' . htmlspecialchars($fullFileName) . '">' . htmlspecialchars($displayFileName) . '</p>';
                 echo '<p class="timestamp">' . $formattedDate . '</p>';
                 echo '</div>';
             }
         } else {
-            echo '<p class="no-images">Noch keine Bilder vorhanden.</p>';
+            echo '<p class="no-images">Keine Bilder für die aktuellen Filterkriterien vorhanden oder noch keine Bilder hochgeladen.</p>';
         }
         ?>
     </div>
