@@ -306,9 +306,9 @@ if ($all_files) {
                 $formattedDate = '';
 
                 if ($metadata) {
-                    // Gekürzter Dateiname für die Galerieansicht (nur Zeitstempel)
-                    $displayFileName = $metadata['timestamp_short']; 
-                    // Formatieren des Datums für die Anzeige
+                    // Gekürzter Dateiname: ESP-ID + Aufwachgrund
+                    $displayFileName = $metadata['esp_id'] . '_' . $metadata['wake_reason'];
+                    // Formatieren des Datums für die Anzeige (aus dem Zeitstempel-Teil des Metadatensatzes)
                     if (preg_match('/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/', $metadata['timestamp_short'], $dateMatches)) {
                          $formattedDate = "{$dateMatches[3]}.{$dateMatches[2]}.{$dateMatches[1]} {$dateMatches[4]}:{$dateMatches[5]}:{$dateMatches[6]}";
                     }
