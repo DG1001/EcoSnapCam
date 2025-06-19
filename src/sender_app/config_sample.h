@@ -26,4 +26,8 @@ static uint8_t espNowReceiverMac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 #define ESP_NOW_CHANNEL 1 // Fest auf Kanal 1 setzen, passend zum Empfänger
 #endif
 
+// ---------------- Deep-Sleep Konfiguration ----------------
+// Dauer des Deep-Sleeps in Minuten
+constexpr uint64_t SLEEP_DURATION_MINUTES = 15;  // Standardwert: 15 Minuten
+
 #endif // CONFIG_SAMPLE_H

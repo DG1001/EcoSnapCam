@@ -20,8 +20,9 @@
 #include "soc/timer_group_struct.h"
 #include "soc/timer_group_reg.h"
 
-// Deep‑Sleep‑Timer (15 min) in µs
-constexpr uint64_t SLEEP_USEC = 15ULL * 60ULL * 1000000ULL;
+// Deep‑Sleep‑Timer in µs (berechnet aus Konfiguration)
+constexpr uint64_t SLEEP_USEC = SLEEP_DURATION_MINUTES * 60ULL * 1000000ULL;
+
 // PIR‑Sensor (RTC‑fähiger Pin)
 static constexpr gpio_num_t PIR_PIN  = GPIO_NUM_13;
 // Batteriespannung (ADC2_CH6 an GPIO14)
