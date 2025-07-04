@@ -72,6 +72,24 @@ Bildergalerie: `http://localhost:8080/upload.php`
 pio run -e espnow_receiver -t upload
 ```
 
+## Web-Interface
+
+Die Bildergalerie bietet eine moderne, Apple-inspirierte Benutzeroberfläche mit zwei Ansichtsmodi:
+
+### Galerie-Ansicht (Letzte 24 Stunden)
+<img src="screen1.png" alt="Galerie-Ansicht" width="600">
+
+### Kalender-Ansicht (Letzte 3 Monate) 
+<img src="screen2.png" alt="Kalender-Ansicht" width="600">
+
+**Features:**
+- **Moderne UI**: Apple-Style Design mit Glasmorphismus-Effekten
+- **Galerie-Ansicht**: Zeigt Bilder der letzten 24 Stunden als Karten
+- **Kalender-Ansicht**: Übersicht der letzten 3 Monate mit Bildzählern pro Tag
+- **Responsive**: Optimiert für Desktop und Mobile
+- **Filter**: Nach Geräte-ID und Aufwachgrund
+- **Modal-Viewer**: Vollbild-Bildanzeige
+
 ## Konfiguration
 
 ### Sender-Konfiguration (`src/sender_app/config.h`)
