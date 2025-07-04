@@ -376,7 +376,7 @@ static void goDeepSleep() {
   
   // Neue Überprüfung: Warte, falls PIR-Pin HIGH ist
   unsigned long startWait = millis();
-  while (digitalRead(PIR_PIN) == HIGH && (millis() - startWait < 2000)) {
+  while (digitalRead(PIR_PIN) == HIGH && (millis() - startWait < 10000)) {
     Serial.println(F("[PIR] Warten auf LOW..."));
     delay(100);  // Warte 100 ms pro Schleifendurchlauf
   }
