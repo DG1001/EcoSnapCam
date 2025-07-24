@@ -177,14 +177,17 @@ function analyze_image_with_ollama($image_path, $ollama_url, $model, $prompt) {
 
 // E-Mail versenden via direktes SMTP
 function send_email($recipient, $subject, $message) {
-    // Automatisch @sensem.de anhängen falls nicht vorhanden
+    // SMTP-Server aus E-Mail-Domain extrahieren
     if (strpos($recipient, '@') === false) {
-        $recipient = $recipient . '@sensem.de';
+        write_log("Ungültige E-Mail-Adresse: " . $recipient);
+        return false;
     }
     
-    $smtp_server = 'sensem.de';
+    $email_parts = explode('@', $recipient);
+    $domain = $email_parts[1];
+    $smtp_server = $domain; // Verwendet die Domain als SMTP-Server
     $smtp_port = 25;
-    $from = 'ecosnapcam@sensem.de';
+    $from = 'ecosnapcam@' . $domain; // From-Adresse aus gleicher Domain
     
     // SMTP-Verbindung aufbauen
     $socket = fsockopen($smtp_server, $smtp_port, $errno, $errstr, 10);
@@ -1658,11 +1661,7 @@ $calendar_months = generate_calendar($calendar_data);
                         if (!empty($workflow['filter_wake_reason'])) echo 'Wake=' . htmlspecialchars($workflow['filter_wake_reason']);
                         if (empty($workflow['filter_esp_id']) && empty($workflow['filter_wake_reason'])) echo 'Alle Bilder';
                         echo '</span>';
-                        $display_email = $workflow['email_recipient'];
-                        if (strpos($display_email, '@') === false) {
-                            $display_email .= '@sensem.de';
-                        }
-                        echo '<span class="detail">E-Mail: ' . htmlspecialchars($display_email) . '</span>';
+                        echo '<span class="detail">E-Mail: ' . htmlspecialchars($workflow['email_recipient']) . '</span>';
                         echo '<span class="detail">Verarbeitet: ' . $workflow['processed_count'] . ' Bilder</span>';
                         echo '</div>';
                         echo '</div>';
@@ -1741,8 +1740,8 @@ $calendar_months = generate_calendar($calendar_data);
                     </div>
                     
                     <div class="form-group">
-                        <label for="email_recipient">Benutzername (sensem.de):</label>
-                        <input type="text" id="email_recipient" name="email_recipient" required placeholder="z.B. test">
+                        <label for="email_recipient">E-Mail-Empfänger:</label>
+                        <input type="email" id="email_recipient" name="email_recipient" required placeholder="z.B. test@example.com">
                     </div>
                     
                     <div class="form-actions">
@@ -1807,8 +1806,8 @@ $calendar_months = generate_calendar($calendar_data);
                     </div>
                     
                     <div class="form-group">
-                        <label for="edit_email_recipient">Benutzername (sensem.de):</label>
-                        <input type="text" id="edit_email_recipient" name="email_recipient" required>
+                        <label for="edit_email_recipient">E-Mail-Empfänger:</label>
+                        <input type="email" id="edit_email_recipient" name="email_recipient" required placeholder="z.B. test@example.com">
                     </div>
                     
                     <div class="form-actions">
