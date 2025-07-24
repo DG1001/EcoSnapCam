@@ -347,4 +347,8 @@ Der optimierte Deep-Sleep-Code erreicht einen Stromverbrauch von ca. **3mA im De
 
 ## Lizenz
 
-MIT License - siehe [LICENSE](LICENSE) Datei für Details.
+**Nur für private Verwendung** - Open Source für private und nicht-kommerzielle Nutzung.
+
+**Kommerzielle Verwendung nur nach Rücksprache mit MeiLuft.**
+
+Siehe [LICENSE](LICENSE) Datei für Details.

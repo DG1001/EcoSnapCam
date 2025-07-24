@@ -347,4 +347,8 @@ The optimized Deep Sleep code achieves a power consumption of approx. **3mA in D
 
 ## License
 
-MIT License - see LICENSE file for details.
+**Private use only** - Open Source for private and non-commercial use.
+
+**Commercial use only after consultation with MeiLuft.**
+
+See [LICENSE](LICENSE) file for details.
