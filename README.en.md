@@ -235,6 +235,11 @@ AI features are configured through the web interface (`http://localhost:8080/upl
 
 EcoSnapCam features advanced AI capabilities for automatic analysis of wildlife camera captures:
 
+### AI Workflow Management
+<img src="screen3.png" alt="AI Workflow Overview" width="600">
+
+The AI workflows enable configuration of different analysis scenarios with specific filters, AI models, and email notifications.
+
 ### Core Features
 
 **Automatic Image Analysis:**

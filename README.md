@@ -235,6 +235,11 @@ Die KI-Funktionen werden über das Web-Interface konfiguriert (`http://localhost
 
 EcoSnapCam verfügt über fortschrittliche KI-Funktionen zur automatischen Analyse von Wildkamera-Aufnahmen:
 
+### KI-Workflow-Verwaltung
+<img src="screen3.png" alt="KI-Workflow-Übersicht" width="600">
+
+Die KI-Workflows ermöglichen die Konfiguration verschiedener Analyseszenarien mit spezifischen Filtern, AI-Modellen und E-Mail-Benachrichtigungen.
+
 ### Kernfunktionen
 
 **Automatische Bildanalyse:**
