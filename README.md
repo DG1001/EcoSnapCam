@@ -15,7 +15,8 @@ Unterstützt Bildübertragung via HTTP/HTTPS oder ESP-NOW an einen dedizierten E
 - **Display-Unterstützung**: Anzeige empfangener Bilder auf TFT-Displays (ESP-NOW Modus)
 - **Robuste Übertragung**: Chunked ESP-NOW Übertragung für größere Bilder
 - **KI-Bildanalyse**: Automatische Wildtiererkennung und -analyse mit Ollama Vision Models
-- **Intelligente Workflows**: Konfigurierbare KI-Verarbeitung mit E-Mail-Benachrichtigungen
+- **Multi-Messenger-Benachrichtigungen**: E-Mail, Discord und Nextcloud Talk Support
+- **Intelligente Workflows**: Konfigurierbare KI-Verarbeitung mit Bild-Attachments
 
 ## Hardware Voraussetzungen
 
@@ -107,7 +108,7 @@ Die Bildergalerie bietet eine moderne, Apple-inspirierte Benutzeroberfläche mit
 - **Responsive**: Optimiert für Desktop und Mobile
 - **Filter**: Nach Geräte-ID und Aufwachgrund
 - **Modal-Viewer**: Vollbild-Bildanzeige
-- **KI-Integration**: Automatische Bildanalyse und Workflow-Verwaltung
+- **KI-Integration**: Automatische Bildanalyse und Multi-Messenger-Benachrichtigungen
 
 ## Konfiguration
 
@@ -172,13 +173,14 @@ Die KI-Funktionen werden über das Web-Interface konfiguriert (`http://localhost
 1. **Workflow erstellen**: Neue KI-Analyse-Workflows für verschiedene Kameras oder Szenarien
 2. **Filter einstellen**: Nach ESP-Geräte-ID oder Aufwachgrund (PIR, TIMER, POWERON)  
 3. **Prompts anpassen**: Benutzerdefinierte KI-Prompts für spezielle Analyseanforderungen
-4. **E-Mail konfigurieren**: Automatische Benachrichtigungen bei interessanten Entdeckungen
-5. **Modell wählen**: Verschiedene Ollama Vision Models (Standard: llava)
+4. **Benachrichtigungskanäle wählen**: E-Mail, Discord, Nextcloud Talk (einzeln oder kombiniert)
+5. **Bild-Attachments**: Analysierte Wildkamera-Bilder direkt mitversenden
+6. **Modell wählen**: Verschiedene Ollama Vision Models (Standard: llava)
 
 **Beispiel-Workflow:**
 - **Filter**: `esp_id = "CAM_01"` (nur Kamera 1) 
 - **Prompt**: `"Erkenne Wildtiere in diesem Bild. Beschreibe Art, Anzahl und Verhalten detailliert."`
-- **E-Mail**: Benachrichtigung bei Tiersichtungen
+- **Benachrichtigungen**: 📧 E-Mail + 💬 Discord (mit Bild 📸)
 - **Modell**: `llava` (oder andere verfügbare Vision Models)
 
 ## Hardware-Details
@@ -251,7 +253,8 @@ Die KI-Workflows ermöglichen die Konfiguration verschiedener Analyseszenarien m
 **Intelligente Workflows:**
 - **Filterbare Verarbeitung**: Gezieltes Processing nach ESP-Geräte-ID oder Trigger-Typ (PIR/Timer/PowerOn)
 - **Benutzerdefinierte Prompts**: Anpassbare KI-Analyseanweisungen für verschiedene Szenarien
-- **Automatische E-Mail-Benachrichtigungen**: Sofortige Benachrichtigung bei interessanten Entdeckungen
+- **Multi-Messenger-Support**: E-Mail, Discord, Nextcloud Talk (einzeln oder kombiniert)
+- **Bild-Attachments**: Wildkamera-Bilder direkt in Benachrichtigungen (Discord)
 - **Datenbankgesteuert**: SQLite-basierte Workflow-Verwaltung mit Web-Interface
 
 ### Technische Features
@@ -268,20 +271,23 @@ Die KI-Workflows ermöglichen die Konfiguration verschiedener Analyseszenarien m
 
 ### Anwendungsbeispiele
 
-**Wildtiermonitoring:**
+**Wildtiermonitoring mit Discord:**
 ```
+Kanäle: 💬 Discord (mit Bild 📸)
 Prompt: "Identifiziere alle Wildtiere in diesem Bild. Beschreibe Art, Anzahl, 
 Verhalten und geschätzte Größe. Achte besonders auf seltene oder ungewöhnliche Arten."
 ```
 
-**Verhaltensanalyse:**
+**Verhaltensanalyse mit Multi-Messenger:**
 ```
+Kanäle: 📧 E-Mail + 💬 Discord + ☁️ Nextcloud Talk
 Prompt: "Analysiere das Verhalten der Tiere. Sind sie beim Fressen, Trinken, 
 in der Paarungszeit oder zeigen sie territoriales Verhalten?"
 ```
 
-**Habitatbewertung:**
+**Habitatbewertung mit Bild-Attachments:**
 ```
+Kanäle: 📧 E-Mail + 💬 Discord (mit Bild 📸)
 Prompt: "Beschreibe die Umgebung und beurteile die Habitatqualität. 
 Welche Pflanzen sind sichtbar und wie ist der allgemeine Zustand des Ökosystems?"
 ```

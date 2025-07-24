@@ -19,6 +19,11 @@ function init_database() {
     $db_path = __DIR__ . '/workflows.db';
     $db = new SQLite3($db_path);
     
+    // SQLite Optimierungen für bessere Concurrency
+    $db->exec("PRAGMA journal_mode = WAL");  // Write-Ahead Logging für bessere Concurrency
+    $db->exec("PRAGMA synchronous = NORMAL"); // Balance zwischen Performance und Sicherheit
+    $db->exec("PRAGMA busy_timeout = 5000");  // 5 Sekunden Timeout bei Locks
+    
     // Workflows-Tabelle
     $db->exec("CREATE TABLE IF NOT EXISTS workflows (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -29,9 +34,69 @@ function init_database() {
         ollama_url TEXT NOT NULL,
         ollama_model TEXT NOT NULL,
         ai_prompt TEXT NOT NULL,
-        email_recipient TEXT NOT NULL,
+        email_recipient TEXT DEFAULT '',
+        notification_channels TEXT DEFAULT 'email',
+        discord_webhook_url TEXT DEFAULT '',
+        nextcloud_server_url TEXT DEFAULT '',
+        nextcloud_talk_token TEXT DEFAULT '',
+        nextcloud_username TEXT DEFAULT '',
+        nextcloud_password TEXT DEFAULT '',
+        attach_image_discord BOOLEAN DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )");
+    
+    // Migration: Neue Spalten zu bestehenden workflows-Tabellen hinzufügen (nur wenn noch nicht vorhanden)
+    $columns_to_add = [
+        'notification_channels' => "TEXT DEFAULT 'email'",
+        'discord_webhook_url' => "TEXT DEFAULT ''",
+        'nextcloud_server_url' => "TEXT DEFAULT ''",
+        'nextcloud_talk_token' => "TEXT DEFAULT ''",
+        'nextcloud_username' => "TEXT DEFAULT ''",
+        'nextcloud_password' => "TEXT DEFAULT ''",
+        'attach_image_discord' => "BOOLEAN DEFAULT 0"
+    ];
+    
+    // Prüfen welche Spalten bereits existieren
+    $existing_columns = [];
+    $result = $db->query("PRAGMA table_info(workflows)");
+    while ($row = $result->fetchArray()) {
+        $existing_columns[] = $row['name'];
+    }
+    
+    foreach ($columns_to_add as $column => $definition) {
+        if (!in_array($column, $existing_columns)) {
+            try {
+                $db->exec("ALTER TABLE workflows ADD COLUMN $column $definition");
+                write_log("Migration: Spalte '$column' zur workflows-Tabelle hinzugefügt");
+            } catch (Exception $e) {
+                write_log("Migration Fehler für Spalte '$column': " . $e->getMessage());
+            }
+        }
+    }
+    
+    // email_recipient kann jetzt leer sein (falls nur Discord/Nextcloud verwendet wird)
+    try {
+        // Retry-Mechanismus für Database-Locks
+        $max_retries = 3;
+        $retry_count = 0;
+        while ($retry_count < $max_retries) {
+            try {
+                $db->exec("UPDATE workflows SET email_recipient = '' WHERE email_recipient IS NULL");
+                break; // Erfolgreich, Loop verlassen
+            } catch (Exception $e) {
+                if (strpos($e->getMessage(), 'database is locked') !== false && $retry_count < $max_retries - 1) {
+                    $retry_count++;
+                    usleep(100000); // 100ms warten
+                    continue;
+                } else {
+                    throw $e; // Anderen Fehler weiterwerfen
+                }
+            }
+        }
+    } catch (Exception $e) {
+        // Ignorieren falls Spalte nicht existiert oder andere nicht-kritische Fehler
+        write_log("Migration Warning: " . $e->getMessage());
+    }
     
     // Verarbeitete Bilder-Tabelle
     $db->exec("CREATE TABLE IF NOT EXISTS processed_images (
@@ -46,6 +111,27 @@ function init_database() {
     )");
     
     return $db;
+}
+
+// Sichere Datenbankoperation mit Retry-Mechanismus
+function safe_db_exec($db, $query, $max_retries = 3) {
+    $retry_count = 0;
+    while ($retry_count < $max_retries) {
+        try {
+            return $db->exec($query);
+        } catch (Exception $e) {
+            if (strpos($e->getMessage(), 'database is locked') !== false && $retry_count < $max_retries - 1) {
+                $retry_count++;
+                write_log("Database locked, retry $retry_count/$max_retries");
+                usleep(200000 * $retry_count); // Exponential backoff: 200ms, 400ms, 600ms
+                continue;
+            } else {
+                write_log("Database error: " . $e->getMessage());
+                throw $e;
+            }
+        }
+    }
+    return false;
 }
 
 // File-basiertes Locking für Ollama-Anfragen
@@ -276,6 +362,212 @@ function send_email($recipient, $subject, $message) {
     }
 }
 
+// Discord Webhook Integration
+function send_discord_message($webhook_url, $message, $image_path = null, $attach_image = false) {
+    if (empty($webhook_url)) {
+        write_log("Discord Webhook-URL ist leer");
+        return false;
+    }
+    
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $webhook_url);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30); // Längerer Timeout für Bild-Upload
+    
+    if ($attach_image && $image_path && file_exists($image_path)) {
+        // Multipart-Upload mit Bild-Attachment
+        $embed_data = [
+            'title' => '🦌 EcoSnapCam - Wildlife Detection',
+            'description' => $message,
+            'color' => 0x2ecc71, // Grün
+            'timestamp' => date('c'),
+            'footer' => [
+                'text' => 'EcoSnapCam Wildlife Monitor',
+                'icon_url' => 'https://raw.githubusercontent.com/microsoft/fluentui-emoji/main/assets/Camera/3D/camera_3d.png'
+            ]
+        ];
+        
+        $payload = [
+            'username' => 'EcoSnapCam',
+            'embeds' => [$embed_data]
+        ];
+        
+        $postfields = [
+            'payload_json' => json_encode($payload),
+            'file' => new CURLFile($image_path, mime_content_type($image_path), basename($image_path))
+        ];
+        
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $postfields);
+        write_log("Discord: Sende Nachricht mit Bild-Attachment: " . basename($image_path));
+        
+    } else {
+        // Standard JSON-Upload ohne Bild
+        $data = [
+            'username' => 'EcoSnapCam',
+            'content' => $message,
+            'embeds' => [
+                [
+                    'title' => '🦌 EcoSnapCam - Wildlife Detection',
+                    'description' => $message,
+                    'color' => 0x3498db, // Blau
+                    'timestamp' => date('c'),
+                    'footer' => [
+                        'text' => 'EcoSnapCam Wildlife Monitor'
+                    ]
+                ]
+            ]
+        ];
+        
+        $headers = ['Content-Type: application/json'];
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+        write_log("Discord: Sende reine Text-Nachricht");
+    }
+    
+    $response = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    
+    if (curl_error($ch)) {
+        write_log("Discord cURL Fehler: " . curl_error($ch));
+        curl_close($ch);
+        return false;
+    }
+    
+    curl_close($ch);
+    
+    if ($http_code >= 200 && $http_code < 300) {
+        $image_info = ($attach_image && $image_path) ? " mit Bild" : " ohne Bild";
+        write_log("Discord-Nachricht erfolgreich gesendet (HTTP $http_code)" . $image_info);
+        return true;
+    } else {
+        write_log("Discord-Fehler: HTTP $http_code - $response");
+        return false;
+    }
+}
+
+// Nextcloud Talk Integration
+function send_nextcloud_talk($server_url, $talk_token, $username, $password, $message) {
+    if (empty($server_url) || empty($talk_token) || empty($username) || empty($password)) {
+        write_log("Nextcloud Talk Parameter unvollständig");
+        return false;
+    }
+    
+    // Entferne trailing slash von server_url
+    $server_url = rtrim($server_url, '/');
+    
+    $url = $server_url . '/ocs/v2.php/apps/spreed/api/v1/chat/' . $talk_token;
+    
+    $data = [
+        'message' => $message
+    ];
+    
+    $headers = [
+        'Content-Type: application/json',
+        'Accept: application/json',
+        'OCS-APIRequest: true',
+        'Authorization: Basic ' . base64_encode($username . ':' . $password)
+    ];
+    
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+    
+    $response = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    
+    if (curl_error($ch)) {
+        write_log("Nextcloud Talk cURL Fehler: " . curl_error($ch));
+        curl_close($ch);
+        return false;
+    }
+    
+    curl_close($ch);
+    
+    if ($http_code >= 200 && $http_code < 300) {
+        write_log("Nextcloud Talk-Nachricht erfolgreich gesendet (HTTP $http_code)");
+        return true;
+    } else {
+        write_log("Nextcloud Talk-Fehler: HTTP $http_code - $response");
+        return false;
+    }
+}
+
+// Vereinheitlichte Notification-Funktion
+function send_notification($workflow, $subject, $message, $image_path = null) {
+    $channels = explode(',', $workflow['notification_channels']);
+    $results = [];
+    
+    foreach ($channels as $channel) {
+        $channel = trim($channel);
+        
+        switch ($channel) {
+            case 'email':
+                if (!empty($workflow['email_recipient'])) {
+                    $results['email'] = send_email($workflow['email_recipient'], $subject, $message);
+                    if ($results['email']) {
+                        write_log("E-Mail erfolgreich gesendet an: " . $workflow['email_recipient']);
+                    }
+                } else {
+                    write_log("E-Mail übersprungen: Keine Empfänger-Adresse konfiguriert");
+                    $results['email'] = false;
+                }
+                break;
+                
+            case 'discord':
+                if (!empty($workflow['discord_webhook_url'])) {
+                    // Discord-spezifische Formatierung
+                    $discord_message = "**$subject**\n\n$message";
+                    $attach_image = !empty($workflow['attach_image_discord']) && $workflow['attach_image_discord'] == 1;
+                    $results['discord'] = send_discord_message($workflow['discord_webhook_url'], $discord_message, $image_path, $attach_image);
+                    if ($results['discord']) {
+                        $image_info = $attach_image ? " (mit Bild)" : "";
+                        write_log("Discord-Nachricht erfolgreich gesendet" . $image_info);
+                    }
+                } else {
+                    write_log("Discord übersprungen: Keine Webhook-URL konfiguriert");
+                    $results['discord'] = false;
+                }
+                break;
+                
+            case 'nextcloud':
+                if (!empty($workflow['nextcloud_server_url']) && !empty($workflow['nextcloud_talk_token']) && 
+                    !empty($workflow['nextcloud_username']) && !empty($workflow['nextcloud_password'])) {
+                    // Nextcloud-spezifische Formatierung
+                    $nextcloud_message = "$subject\n\n$message";
+                    $results['nextcloud'] = send_nextcloud_talk(
+                        $workflow['nextcloud_server_url'],
+                        $workflow['nextcloud_talk_token'],
+                        $workflow['nextcloud_username'],
+                        $workflow['nextcloud_password'],
+                        $nextcloud_message
+                    );
+                    if ($results['nextcloud']) {
+                        write_log("Nextcloud Talk-Nachricht erfolgreich gesendet");
+                    }
+                } else {
+                    write_log("Nextcloud Talk übersprungen: Unvollständige Konfiguration");
+                    $results['nextcloud'] = false;
+                }
+                break;
+                
+            default:
+                write_log("Unbekannter Notification-Kanal: $channel");
+                break;
+        }
+    }
+    
+    // Mindestens ein Kanal erfolgreich?
+    $success = array_filter($results);
+    return !empty($success);
+}
+
 // Workflows verarbeiten
 function process_workflows($image_path, $metadata, $db) {
     // Cleanup verwaiste Locks vor Verarbeitung
@@ -309,7 +601,7 @@ function process_workflows($image_path, $metadata, $db) {
             }
             
             $analysis = null;
-            $email_sent = false;
+            $notification_sent = false;
             $error_message = '';
             
             try {
@@ -322,24 +614,27 @@ function process_workflows($image_path, $metadata, $db) {
                 );
                 
                 if ($analysis['success']) {
-                    // E-Mail versenden - mit zusätzlichem Error Handling
+                    // Benachrichtigungen über alle konfigurierten Kanäle senden
                     $subject = "KI-Analyse: " . $workflow['name'] . " - " . $metadata['esp_id'];
-                    $email_body = "Bildanalyse von " . basename($image_path) . "\n\n";
-                    $email_body .= "ESP-ID: " . $metadata['esp_id'] . "\n";
-                    $email_body .= "Wake Reason: " . $metadata['wake_reason'] . "\n";
-                    $email_body .= "Zeitstempel: " . $metadata['timestamp_short'] . "\n\n";
-                    $email_body .= "KI-Analyse:\n" . $analysis['result'];
+                    $message_body = "Bildanalyse von " . basename($image_path) . "\n\n";
+                    $message_body .= "ESP-ID: " . $metadata['esp_id'] . "\n";
+                    $message_body .= "Wake Reason: " . $metadata['wake_reason'] . "\n";
+                    $message_body .= "Zeitstempel: " . $metadata['timestamp_short'] . "\n";
+                    if (!empty($metadata['battery_voltage'])) {
+                        $message_body .= "Batterie: " . $metadata['battery_voltage'] . "V\n";
+                    }
+                    $message_body .= "\nKI-Analyse:\n" . $analysis['result'];
                     
                     try {
-                        $email_sent = send_email($workflow['email_recipient'], $subject, $email_body);
-                        if (!$email_sent) {
-                            $error_message = "E-Mail konnte nicht gesendet werden";
-                            write_log("E-Mail-Versand fehlgeschlagen für Workflow '" . $workflow['name'] . "'");
+                        $notification_sent = send_notification($workflow, $subject, $message_body, $image_path);
+                        if (!$notification_sent) {
+                            $error_message = "Benachrichtigung konnte nicht gesendet werden";
+                            write_log("Benachrichtigung fehlgeschlagen für Workflow '" . $workflow['name'] . "'");
                         }
-                    } catch (Exception $email_error) {
-                        $error_message = "E-Mail-Fehler: " . $email_error->getMessage();
+                    } catch (Exception $notification_error) {
+                        $error_message = "Benachrichtigung-Fehler: " . $notification_error->getMessage();
                         write_log($error_message);
-                        $email_sent = false;
+                        $notification_sent = false;
                     }
                 } else {
                     $error_message = $analysis['error'];
@@ -358,7 +653,7 @@ function process_workflows($image_path, $metadata, $db) {
             $stmt_insert->bindValue(1, $workflow['id'], SQLITE3_INTEGER);
             $stmt_insert->bindValue(2, $image_path, SQLITE3_TEXT);
             $stmt_insert->bindValue(3, ($analysis && $analysis['success']) ? $analysis['result'] : '', SQLITE3_TEXT);
-            $stmt_insert->bindValue(4, $email_sent ? 1 : 0, SQLITE3_INTEGER);
+            $stmt_insert->bindValue(4, $notification_sent ? 1 : 0, SQLITE3_INTEGER);
             $stmt_insert->bindValue(5, $error_message, SQLITE3_TEXT);
             $stmt_insert->execute();
         }
@@ -551,16 +846,30 @@ if (isset($_POST['action'])) {
     
     // Workflow-Management Actions
     if ($action === 'create_workflow') {
-        $stmt = $db->prepare("INSERT INTO workflows (name, filter_esp_id, filter_wake_reason, ollama_url, ollama_model, ai_prompt, email_recipient) VALUES (?, ?, ?, ?, ?, ?, ?)");
+        // Notification-Kanäle aus Checkboxen erstellen
+        $notification_channels = [];
+        if (!empty($_POST['notify_email'])) $notification_channels[] = 'email';
+        if (!empty($_POST['notify_discord'])) $notification_channels[] = 'discord';
+        if (!empty($_POST['notify_nextcloud'])) $notification_channels[] = 'nextcloud';
+        $notification_channels_str = implode(',', $notification_channels);
+        
+        $stmt = $db->prepare("INSERT INTO workflows (name, filter_esp_id, filter_wake_reason, ollama_url, ollama_model, ai_prompt, email_recipient, notification_channels, discord_webhook_url, nextcloud_server_url, nextcloud_talk_token, nextcloud_username, nextcloud_password, attach_image_discord) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         $stmt->bindValue(1, $_POST['name'], SQLITE3_TEXT);
         $stmt->bindValue(2, $_POST['filter_esp_id'], SQLITE3_TEXT);
         $stmt->bindValue(3, $_POST['filter_wake_reason'], SQLITE3_TEXT);
         $stmt->bindValue(4, $_POST['ollama_url'], SQLITE3_TEXT);
         $stmt->bindValue(5, $_POST['ollama_model'], SQLITE3_TEXT);
         $stmt->bindValue(6, $_POST['ai_prompt'], SQLITE3_TEXT);
-        $stmt->bindValue(7, $_POST['email_recipient'], SQLITE3_TEXT);
+        $stmt->bindValue(7, $_POST['email_recipient'] ?? '', SQLITE3_TEXT);
+        $stmt->bindValue(8, $notification_channels_str, SQLITE3_TEXT);
+        $stmt->bindValue(9, $_POST['discord_webhook_url'] ?? '', SQLITE3_TEXT);
+        $stmt->bindValue(10, $_POST['nextcloud_server_url'] ?? '', SQLITE3_TEXT);
+        $stmt->bindValue(11, $_POST['nextcloud_talk_token'] ?? '', SQLITE3_TEXT);
+        $stmt->bindValue(12, $_POST['nextcloud_username'] ?? '', SQLITE3_TEXT);
+        $stmt->bindValue(13, $_POST['nextcloud_password'] ?? '', SQLITE3_TEXT);
+        $stmt->bindValue(14, !empty($_POST['attach_image_discord']) ? 1 : 0, SQLITE3_INTEGER);
         $stmt->execute();
-        write_log("Neuer Workflow erstellt: " . $_POST['name']);
+        write_log("Neuer Workflow erstellt: " . $_POST['name'] . " (Kanäle: $notification_channels_str)");
         header("Location: ?view=workflows");
         exit;
     } elseif ($action === 'toggle_workflow') {
@@ -573,17 +882,32 @@ if (isset($_POST['action'])) {
         exit;
     } elseif ($action === 'edit_workflow') {
         $workflow_id = (int)$_POST['workflow_id'];
-        $stmt = $db->prepare("UPDATE workflows SET name=?, filter_esp_id=?, filter_wake_reason=?, ollama_url=?, ollama_model=?, ai_prompt=?, email_recipient=? WHERE id=?");
+        
+        // Notification-Kanäle aus Checkboxen erstellen
+        $notification_channels = [];
+        if (!empty($_POST['notify_email'])) $notification_channels[] = 'email';
+        if (!empty($_POST['notify_discord'])) $notification_channels[] = 'discord';
+        if (!empty($_POST['notify_nextcloud'])) $notification_channels[] = 'nextcloud';
+        $notification_channels_str = implode(',', $notification_channels);
+        
+        $stmt = $db->prepare("UPDATE workflows SET name=?, filter_esp_id=?, filter_wake_reason=?, ollama_url=?, ollama_model=?, ai_prompt=?, email_recipient=?, notification_channels=?, discord_webhook_url=?, nextcloud_server_url=?, nextcloud_talk_token=?, nextcloud_username=?, nextcloud_password=?, attach_image_discord=? WHERE id=?");
         $stmt->bindValue(1, $_POST['name'], SQLITE3_TEXT);
         $stmt->bindValue(2, $_POST['filter_esp_id'], SQLITE3_TEXT);
         $stmt->bindValue(3, $_POST['filter_wake_reason'], SQLITE3_TEXT);
         $stmt->bindValue(4, $_POST['ollama_url'], SQLITE3_TEXT);
         $stmt->bindValue(5, $_POST['ollama_model'], SQLITE3_TEXT);
         $stmt->bindValue(6, $_POST['ai_prompt'], SQLITE3_TEXT);
-        $stmt->bindValue(7, $_POST['email_recipient'], SQLITE3_TEXT);
-        $stmt->bindValue(8, $workflow_id, SQLITE3_INTEGER);
+        $stmt->bindValue(7, $_POST['email_recipient'] ?? '', SQLITE3_TEXT);
+        $stmt->bindValue(8, $notification_channels_str, SQLITE3_TEXT);
+        $stmt->bindValue(9, $_POST['discord_webhook_url'] ?? '', SQLITE3_TEXT);
+        $stmt->bindValue(10, $_POST['nextcloud_server_url'] ?? '', SQLITE3_TEXT);
+        $stmt->bindValue(11, $_POST['nextcloud_talk_token'] ?? '', SQLITE3_TEXT);
+        $stmt->bindValue(12, $_POST['nextcloud_username'] ?? '', SQLITE3_TEXT);
+        $stmt->bindValue(13, $_POST['nextcloud_password'] ?? '', SQLITE3_TEXT);
+        $stmt->bindValue(14, !empty($_POST['attach_image_discord']) ? 1 : 0, SQLITE3_INTEGER);
+        $stmt->bindValue(15, $workflow_id, SQLITE3_INTEGER);
         $stmt->execute();
-        write_log("Workflow bearbeitet ID: " . $workflow_id . " - " . $_POST['name']);
+        write_log("Workflow bearbeitet ID: " . $workflow_id . " - " . $_POST['name'] . " (Kanäle: $notification_channels_str)");
         header("Location: ?view=workflows");
         exit;
     } elseif ($action === 'delete_workflow') {
@@ -1377,6 +1701,58 @@ $calendar_months = generate_calendar($calendar_data);
             background: #e5e5ea;
         }
         
+        /* Notification-Kanäle Styling */
+        .notification-channels {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-top: 8px;
+        }
+        
+        .channel-option {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border: 1px solid #e5e5ea;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+        }
+        
+        .channel-option:hover {
+            background: rgba(0, 122, 255, 0.05);
+            border-color: #007aff;
+        }
+        
+        .channel-option input[type="checkbox"] {
+            margin: 0;
+            transform: scale(1.1);
+        }
+        
+        .channel-option label {
+            margin: 0;
+            font-weight: 500;
+            cursor: pointer;
+        }
+        
+        .email-config, .discord-config, .nextcloud-config {
+            margin-top: 15px;
+            padding: 15px;
+            background: rgba(0, 122, 255, 0.05);
+            border-radius: 8px;
+            border-left: 3px solid #007aff;
+        }
+        
+        .discord-config {
+            background: rgba(114, 137, 218, 0.05);
+            border-left-color: #7289da;
+        }
+        
+        .nextcloud-config {
+            background: rgba(0, 130, 201, 0.05);
+            border-left-color: #0082c9;
+        }
+        
         .ollama-status {
             display: flex;
             align-items: center;
@@ -1710,7 +2086,36 @@ $calendar_months = generate_calendar($calendar_data);
                         if (!empty($workflow['filter_wake_reason'])) echo 'Wake=' . htmlspecialchars($workflow['filter_wake_reason']);
                         if (empty($workflow['filter_esp_id']) && empty($workflow['filter_wake_reason'])) echo 'Alle Bilder';
                         echo '</span>';
-                        echo '<span class="detail">E-Mail: ' . htmlspecialchars($workflow['email_recipient']) . '</span>';
+                        // Notification-Kanäle anzeigen
+                        $channels = explode(',', $workflow['notification_channels'] ?? 'email');
+                        $channel_icons = [
+                            'email' => '📧',
+                            'discord' => '💬',
+                            'nextcloud' => '☁️'
+                        ];
+                        $channel_display = [];
+                        foreach ($channels as $channel) {
+                            $channel = trim($channel);
+                            if (isset($channel_icons[$channel])) {
+                                $channel_display[] = $channel_icons[$channel] . ' ' . ucfirst($channel);
+                            }
+                        }
+                        echo '<span class="detail">Benachrichtigung: ' . implode(', ', $channel_display) . '</span>';
+                        
+                        // Details für aktive Kanäle
+                        if (in_array('email', $channels) && !empty($workflow['email_recipient'])) {
+                            echo '<span class="detail">E-Mail: ' . htmlspecialchars($workflow['email_recipient']) . '</span>';
+                        }
+                        if (in_array('discord', $channels) && !empty($workflow['discord_webhook_url'])) {
+                            $discord_detail = 'Discord: Webhook konfiguriert';
+                            if (!empty($workflow['attach_image_discord']) && $workflow['attach_image_discord'] == 1) {
+                                $discord_detail .= ' 📸';
+                            }
+                            echo '<span class="detail">' . $discord_detail . '</span>';
+                        }
+                        if (in_array('nextcloud', $channels) && !empty($workflow['nextcloud_server_url'])) {
+                            echo '<span class="detail">Nextcloud: ' . htmlspecialchars(parse_url($workflow['nextcloud_server_url'], PHP_URL_HOST)) . '</span>';
+                        }
                         echo '<span class="detail">Verarbeitet: ' . $workflow['processed_count'] . ' Bilder</span>';
                         echo '</div>';
                         echo '</div>';
@@ -1788,9 +2193,69 @@ $calendar_months = generate_calendar($calendar_data);
                         <textarea id="ai_prompt" name="ai_prompt" rows="4" required placeholder="Beschreibe was du auf diesem Bild siehst. Achte besonders auf Tiere und ihre Aktivitäten."></textarea>
                     </div>
                     
+                    <!-- Notification-Kanäle -->
                     <div class="form-group">
+                        <label>Benachrichtigungen senden über:</label>
+                        <div class="notification-channels">
+                            <div class="channel-option">
+                                <input type="checkbox" id="notify_email" name="notify_email" value="1" checked onchange="toggleEmailFields()">
+                                <label for="notify_email">📧 E-Mail</label>
+                            </div>
+                            <div class="channel-option">
+                                <input type="checkbox" id="notify_discord" name="notify_discord" value="1" onchange="toggleDiscordFields()">
+                                <label for="notify_discord">💬 Discord</label>
+                            </div>
+                            <div class="channel-option">
+                                <input type="checkbox" id="notify_nextcloud" name="notify_nextcloud" value="1" onchange="toggleNextcloudFields()">
+                                <label for="notify_nextcloud">☁️ Nextcloud Talk</label>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- E-Mail Konfiguration -->
+                    <div class="form-group email-config" id="email_config">
                         <label for="email_recipient">E-Mail-Empfänger:</label>
-                        <input type="email" id="email_recipient" name="email_recipient" required placeholder="z.B. test@example.com">
+                        <input type="email" id="email_recipient" name="email_recipient" placeholder="z.B. test@example.com">
+                    </div>
+                    
+                    <!-- Discord Konfiguration -->
+                    <div class="form-group discord-config" id="discord_config" style="display: none;">
+                        <label for="discord_webhook_url">Discord Webhook-URL:</label>
+                        <input type="url" id="discord_webhook_url" name="discord_webhook_url" placeholder="https://discord.com/api/webhooks/...">
+                        <small>Erstelle einen Webhook in deinem Discord-Server: Server → Einstellungen → Integrationen → Webhook</small>
+                        
+                        <div class="form-group" style="margin-top: 15px;">
+                            <label style="display: flex; align-items: center; gap: 8px;">
+                                <input type="checkbox" id="attach_image_discord" name="attach_image_discord" value="1">
+                                <span>📸 Bild mit Discord-Nachricht senden</span>
+                            </label>
+                            <small>Das analysierte Bild wird direkt in Discord hochgeladen und angezeigt</small>
+                        </div>
+                    </div>
+                    
+                    <!-- Nextcloud Talk Konfiguration -->
+                    <div class="form-group nextcloud-config" id="nextcloud_config" style="display: none;">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="nextcloud_server_url">Nextcloud Server-URL:</label>
+                                <input type="url" id="nextcloud_server_url" name="nextcloud_server_url" placeholder="https://meine-nextcloud.de">
+                            </div>
+                            <div class="form-group">
+                                <label for="nextcloud_talk_token">Talk-Raum Token:</label>
+                                <input type="text" id="nextcloud_talk_token" name="nextcloud_talk_token" placeholder="Raum-Token aus Talk-URL">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="nextcloud_username">Benutzername:</label>
+                                <input type="text" id="nextcloud_username" name="nextcloud_username" placeholder="Nextcloud-Benutzername">
+                            </div>
+                            <div class="form-group">
+                                <label for="nextcloud_password">Passwort/App-Token:</label>
+                                <input type="password" id="nextcloud_password" name="nextcloud_password" placeholder="Passwort oder App-Token">
+                            </div>
+                        </div>
+                        <small>Talk-Token findest du in der URL des Talk-Raums: /call/TOKEN_HIER</small>
                     </div>
                     
                     <div class="form-actions">
@@ -1854,9 +2319,69 @@ $calendar_months = generate_calendar($calendar_data);
                         <textarea id="edit_ai_prompt" name="ai_prompt" rows="4" required></textarea>
                     </div>
                     
+                    <!-- Notification-Kanäle für Edit-Modal -->
                     <div class="form-group">
+                        <label>Benachrichtigungen senden über:</label>
+                        <div class="notification-channels">
+                            <div class="channel-option">
+                                <input type="checkbox" id="edit_notify_email" name="notify_email" value="1" onchange="toggleEditEmailFields()">
+                                <label for="edit_notify_email">📧 E-Mail</label>
+                            </div>
+                            <div class="channel-option">
+                                <input type="checkbox" id="edit_notify_discord" name="notify_discord" value="1" onchange="toggleEditDiscordFields()">
+                                <label for="edit_notify_discord">💬 Discord</label>
+                            </div>
+                            <div class="channel-option">
+                                <input type="checkbox" id="edit_notify_nextcloud" name="notify_nextcloud" value="1" onchange="toggleEditNextcloudFields()">
+                                <label for="edit_notify_nextcloud">☁️ Nextcloud Talk</label>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- E-Mail Konfiguration für Edit-Modal -->
+                    <div class="form-group email-config" id="edit_email_config">
                         <label for="edit_email_recipient">E-Mail-Empfänger:</label>
-                        <input type="email" id="edit_email_recipient" name="email_recipient" required placeholder="z.B. test@example.com">
+                        <input type="email" id="edit_email_recipient" name="email_recipient" placeholder="z.B. test@example.com">
+                    </div>
+                    
+                    <!-- Discord Konfiguration für Edit-Modal -->
+                    <div class="form-group discord-config" id="edit_discord_config" style="display: none;">
+                        <label for="edit_discord_webhook_url">Discord Webhook-URL:</label>
+                        <input type="url" id="edit_discord_webhook_url" name="discord_webhook_url" placeholder="https://discord.com/api/webhooks/...">
+                        <small>Erstelle einen Webhook in deinem Discord-Server: Server → Einstellungen → Integrationen → Webhook</small>
+                        
+                        <div class="form-group" style="margin-top: 15px;">
+                            <label style="display: flex; align-items: center; gap: 8px;">
+                                <input type="checkbox" id="edit_attach_image_discord" name="attach_image_discord" value="1">
+                                <span>📸 Bild mit Discord-Nachricht senden</span>
+                            </label>
+                            <small>Das analysierte Bild wird direkt in Discord hochgeladen und angezeigt</small>
+                        </div>
+                    </div>
+                    
+                    <!-- Nextcloud Talk Konfiguration für Edit-Modal -->
+                    <div class="form-group nextcloud-config" id="edit_nextcloud_config" style="display: none;">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="edit_nextcloud_server_url">Nextcloud Server-URL:</label>
+                                <input type="url" id="edit_nextcloud_server_url" name="nextcloud_server_url" placeholder="https://meine-nextcloud.de">
+                            </div>
+                            <div class="form-group">
+                                <label for="edit_nextcloud_talk_token">Talk-Raum Token:</label>
+                                <input type="text" id="edit_nextcloud_talk_token" name="nextcloud_talk_token" placeholder="Raum-Token aus Talk-URL">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="edit_nextcloud_username">Benutzername:</label>
+                                <input type="text" id="edit_nextcloud_username" name="nextcloud_username" placeholder="Nextcloud-Benutzername">
+                            </div>
+                            <div class="form-group">
+                                <label for="edit_nextcloud_password">Passwort/App-Token:</label>
+                                <input type="password" id="edit_nextcloud_password" name="nextcloud_password" placeholder="Passwort oder App-Token">
+                            </div>
+                        </div>
+                        <small>Talk-Token findest du in der URL des Talk-Raums: /call/TOKEN_HIER</small>
                     </div>
                     
                     <div class="form-actions">
@@ -1914,6 +2439,40 @@ $calendar_months = generate_calendar($calendar_data);
             document.getElementById('createWorkflowModal').style.display = 'none';
         }
 
+        // Toggle-Funktionen für Create-Modal
+        function toggleEmailFields() {
+            const checked = document.getElementById('notify_email').checked;
+            document.getElementById('email_config').style.display = checked ? 'block' : 'none';
+            document.getElementById('email_recipient').required = checked;
+        }
+
+        function toggleDiscordFields() {
+            const checked = document.getElementById('notify_discord').checked;
+            document.getElementById('discord_config').style.display = checked ? 'block' : 'none';
+        }
+
+        function toggleNextcloudFields() {
+            const checked = document.getElementById('notify_nextcloud').checked;
+            document.getElementById('nextcloud_config').style.display = checked ? 'block' : 'none';
+        }
+
+        // Toggle-Funktionen für Edit-Modal
+        function toggleEditEmailFields() {
+            const checked = document.getElementById('edit_notify_email').checked;
+            document.getElementById('edit_email_config').style.display = checked ? 'block' : 'none';
+            document.getElementById('edit_email_recipient').required = checked;
+        }
+
+        function toggleEditDiscordFields() {
+            const checked = document.getElementById('edit_notify_discord').checked;
+            document.getElementById('edit_discord_config').style.display = checked ? 'block' : 'none';
+        }
+
+        function toggleEditNextcloudFields() {
+            const checked = document.getElementById('edit_notify_nextcloud').checked;
+            document.getElementById('edit_nextcloud_config').style.display = checked ? 'block' : 'none';
+        }
+
         function showEditWorkflowModal(workflowId) {
             // Workflow-Daten per AJAX laden
             fetch('?view=workflows&get_workflow=' + workflowId)
@@ -1928,6 +2487,25 @@ $calendar_months = generate_calendar($calendar_data);
                         document.getElementById('edit_ollama_model').value = data.workflow.ollama_model;
                         document.getElementById('edit_ai_prompt').value = data.workflow.ai_prompt;
                         document.getElementById('edit_email_recipient').value = data.workflow.email_recipient;
+                        
+                        // Notification-Kanäle setzen
+                        const channels = (data.workflow.notification_channels || 'email').split(',');
+                        document.getElementById('edit_notify_email').checked = channels.includes('email');
+                        document.getElementById('edit_notify_discord').checked = channels.includes('discord');
+                        document.getElementById('edit_notify_nextcloud').checked = channels.includes('nextcloud');
+                        
+                        // Notification-spezifische Felder füllen
+                        document.getElementById('edit_discord_webhook_url').value = data.workflow.discord_webhook_url || '';
+                        document.getElementById('edit_attach_image_discord').checked = data.workflow.attach_image_discord == 1;
+                        document.getElementById('edit_nextcloud_server_url').value = data.workflow.nextcloud_server_url || '';
+                        document.getElementById('edit_nextcloud_talk_token').value = data.workflow.nextcloud_talk_token || '';
+                        document.getElementById('edit_nextcloud_username').value = data.workflow.nextcloud_username || '';
+                        document.getElementById('edit_nextcloud_password').value = data.workflow.nextcloud_password || '';
+                        
+                        // Toggle-Funktionen aufrufen um Sichtbarkeit zu aktualisieren
+                        toggleEditEmailFields();
+                        toggleEditDiscordFields();
+                        toggleEditNextcloudFields();
                         
                         document.getElementById('editWorkflowModal').style.display = 'block';
                     } else {

@@ -15,7 +15,8 @@ Supports image transmission via HTTP/HTTPS or ESP-NOW to a dedicated ESP32 recei
 - **Display Support**: Display of received images on TFT displays (ESP-NOW mode)
 - **Robust Transmission**: Chunked ESP-NOW transmission for larger images
 - **AI Image Analysis**: Automatic wildlife detection and analysis with Ollama Vision Models
-- **Intelligent Workflows**: Configurable AI processing with email notifications
+- **Multi-Messenger Notifications**: Email, Discord and Nextcloud Talk support
+- **Intelligent Workflows**: Configurable AI processing with image attachments
 
 ## Hardware Prerequisites
 
@@ -107,7 +108,7 @@ The image gallery features a modern, Apple-inspired user interface with two view
 - **Responsive**: Optimized for desktop and mobile
 - **Filters**: By device ID and wake reason
 - **Modal Viewer**: Full-screen image display
-- **AI Integration**: Automatic image analysis and workflow management
+- **AI Integration**: Automatic image analysis and multi-messenger notifications
 
 ## Configuration
 
@@ -172,13 +173,14 @@ AI features are configured through the web interface (`http://localhost:8080/upl
 1. **Create Workflows**: New AI analysis workflows for different cameras or scenarios
 2. **Set Filters**: By ESP device ID or wake reason (PIR, TIMER, POWERON)
 3. **Customize Prompts**: User-defined AI prompts for special analysis requirements
-4. **Configure Email**: Automatic notifications for interesting discoveries
-5. **Choose Model**: Different Ollama Vision Models (default: llava)
+4. **Choose Notification Channels**: Email, Discord, Nextcloud Talk (individually or combined)
+5. **Image Attachments**: Send analyzed wildlife camera images directly
+6. **Choose Model**: Different Ollama Vision Models (default: llava)
 
 **Example Workflow:**
 - **Filter**: `esp_id = "CAM_01"` (camera 1 only)
 - **Prompt**: `"Identify wildlife in this image. Describe species, count, and behavior in detail."`
-- **Email**: Notifications for animal sightings
+- **Notifications**: 📧 Email + 💬 Discord (with image 📸)
 - **Model**: `llava` (or other available Vision Models)
 
 ## Hardware Details
@@ -251,7 +253,8 @@ The AI workflows enable configuration of different analysis scenarios with speci
 **Intelligent Workflows:**
 - **Filterable Processing**: Targeted processing by ESP device ID or trigger type (PIR/Timer/PowerOn)
 - **Custom Prompts**: Customizable AI analysis instructions for different scenarios
-- **Automatic Email Notifications**: Instant notifications for interesting discoveries
+- **Multi-Messenger Support**: Email, Discord, Nextcloud Talk (individually or combined)
+- **Image Attachments**: Wildlife camera images directly in notifications (Discord)
 - **Database-driven**: SQLite-based workflow management with web interface
 
 ### Technical Features
@@ -268,20 +271,23 @@ The AI workflows enable configuration of different analysis scenarios with speci
 
 ### Application Examples
 
-**Wildlife Monitoring:**
+**Wildlife Monitoring with Discord:**
 ```
+Channels: 💬 Discord (with image 📸)
 Prompt: "Identify all wildlife in this image. Describe species, count, 
 behavior and estimated size. Pay special attention to rare or unusual species."
 ```
 
-**Behavior Analysis:**
+**Behavior Analysis with Multi-Messenger:**
 ```
+Channels: 📧 Email + 💬 Discord + ☁️ Nextcloud Talk
 Prompt: "Analyze the behavior of the animals. Are they feeding, drinking, 
 in mating season, or showing territorial behavior?"
 ```
 
-**Habitat Assessment:**
+**Habitat Assessment with Image Attachments:**
 ```
+Channels: 📧 Email + 💬 Discord (with image 📸)
 Prompt: "Describe the environment and assess habitat quality. 
 What plants are visible and what is the general condition of the ecosystem?"
 ```
