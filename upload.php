@@ -48,6 +48,88 @@ function init_database() {
     return $db;
 }
 
+// File-basiertes Locking für Ollama-Anfragen
+function acquire_ollama_lock($timeout_seconds = 300) {
+    $lock_file = __DIR__ . '/ollama_processing.lock';
+    $max_wait = time() + $timeout_seconds;
+    
+    while (time() < $max_wait) {
+        if (!file_exists($lock_file)) {
+            // Versuche Lock zu erstellen
+            $lock_data = [
+                'pid' => getmypid(),
+                'timestamp' => time(),
+                'script' => $_SERVER['SCRIPT_NAME'] ?? 'unknown'
+            ];
+            
+            if (file_put_contents($lock_file, json_encode($lock_data), LOCK_EX) !== false) {
+                write_log("Ollama-Lock erfolgreich erhalten (PID: " . getmypid() . ")");
+                return true;
+            }
+        } else {
+            // Prüfe ob Lock veraltet ist
+            $lock_content = file_get_contents($lock_file);
+            if ($lock_content) {
+                $lock_data = json_decode($lock_content, true);
+                if ($lock_data && isset($lock_data['timestamp'])) {
+                    // Lock älter als 10 Minuten? -> Als stale betrachten
+                    if (time() - $lock_data['timestamp'] > 600) {
+                        write_log("Stale Ollama-Lock erkannt, entferne Lock (Alt-PID: " . ($lock_data['pid'] ?? 'unknown') . ")");
+                        unlink($lock_file);
+                        continue;
+                    }
+                }
+            }
+        }
+        
+        // Kurz warten bevor erneuter Versuch
+        usleep(500000); // 0.5 Sekunden
+    }
+    
+    write_log("Ollama-Lock Timeout erreicht nach {$timeout_seconds} Sekunden");
+    return false;
+}
+
+function release_ollama_lock() {
+    $lock_file = __DIR__ . '/ollama_processing.lock';
+    
+    if (file_exists($lock_file)) {
+        $lock_content = file_get_contents($lock_file);
+        $lock_data = json_decode($lock_content, true);
+        
+        // Prüfe ob wir der Besitzer des Locks sind
+        if ($lock_data && isset($lock_data['pid']) && $lock_data['pid'] == getmypid()) {
+            unlink($lock_file);
+            write_log("Ollama-Lock erfolgreich freigegeben (PID: " . getmypid() . ")");
+            return true;
+        } else {
+            write_log("Warnung: Versuch Lock freizugeben, aber PID stimmt nicht überein");
+            return false;
+        }
+    }
+    
+    return true; // Kein Lock vorhanden, ist ok
+}
+
+// Cleanup-Funktion für verwaiste Locks
+function cleanup_stale_locks() {
+    $lock_file = __DIR__ . '/ollama_processing.lock';
+    
+    if (file_exists($lock_file)) {
+        $lock_content = file_get_contents($lock_file);
+        if ($lock_content) {
+            $lock_data = json_decode($lock_content, true);
+            if ($lock_data && isset($lock_data['timestamp'])) {
+                // Lock älter als 10 Minuten?
+                if (time() - $lock_data['timestamp'] > 600) {
+                    unlink($lock_file);
+                    write_log("Cleanup: Stale Ollama-Lock entfernt (Alt-PID: " . ($lock_data['pid'] ?? 'unknown') . ")");
+                }
+            }
+        }
+    }
+}
+
 // Ollama API Integration
 function analyze_image_with_ollama($image_path, $ollama_url, $model, $prompt) {
     $image_data = base64_encode(file_get_contents($image_path));
@@ -95,6 +177,11 @@ function analyze_image_with_ollama($image_path, $ollama_url, $model, $prompt) {
 
 // E-Mail versenden
 function send_email($recipient, $subject, $message) {
+    // Automatisch @sensem.de anhängen falls nicht vorhanden
+    if (strpos($recipient, '@') === false) {
+        $recipient = $recipient . '@sensem.de';
+    }
+    
     $headers = "From: ecosnapcam@sensem.de\r\n";
     $headers .= "Content-Type: text/plain; charset=UTF-8\r\n";
     
@@ -111,6 +198,9 @@ function send_email($recipient, $subject, $message) {
 
 // Workflows verarbeiten
 function process_workflows($image_path, $metadata, $db) {
+    // Cleanup verwaiste Locks vor Verarbeitung
+    cleanup_stale_locks();
+    
     $stmt = $db->prepare("SELECT * FROM workflows WHERE active = 1");
     $result = $stmt->execute();
     
@@ -122,42 +212,96 @@ function process_workflows($image_path, $metadata, $db) {
         if ($esp_match && $wake_match) {
             write_log("Workflow '" . $workflow['name'] . "' matched für Bild: " . basename($image_path));
             
-            // KI-Analyse durchführen
-            $analysis = analyze_image_with_ollama(
-                $image_path,
-                $workflow['ollama_url'],
-                $workflow['ollama_model'],
-                $workflow['ai_prompt']
-            );
+            // Lock für Ollama-Anfrage erhalten
+            if (!acquire_ollama_lock()) {
+                $error_message = "Timeout beim Warten auf Ollama-Lock";
+                write_log("KI-Analyse übersprungen für Workflow '" . $workflow['name'] . "': " . $error_message);
+                
+                // Fehler in Datenbank speichern
+                $stmt_insert = $db->prepare("INSERT INTO processed_images (workflow_id, image_path, ai_result, email_sent, error_message) VALUES (?, ?, ?, ?, ?)");
+                $stmt_insert->bindValue(1, $workflow['id'], SQLITE3_INTEGER);
+                $stmt_insert->bindValue(2, $image_path, SQLITE3_TEXT);
+                $stmt_insert->bindValue(3, '', SQLITE3_TEXT);
+                $stmt_insert->bindValue(4, 0, SQLITE3_INTEGER);
+                $stmt_insert->bindValue(5, $error_message, SQLITE3_TEXT);
+                $stmt_insert->execute();
+                continue;
+            }
             
+            $analysis = null;
             $email_sent = false;
             $error_message = '';
             
-            if ($analysis['success']) {
-                // E-Mail versenden
-                $subject = "KI-Analyse: " . $workflow['name'] . " - " . $metadata['esp_id'];
-                $email_body = "Bildanalyse von " . basename($image_path) . "\n\n";
-                $email_body .= "ESP-ID: " . $metadata['esp_id'] . "\n";
-                $email_body .= "Wake Reason: " . $metadata['wake_reason'] . "\n";
-                $email_body .= "Zeitstempel: " . $metadata['timestamp_short'] . "\n\n";
-                $email_body .= "KI-Analyse:\n" . $analysis['result'];
+            try {
+                // KI-Analyse durchführen (in kritischer Sektion)
+                $analysis = analyze_image_with_ollama(
+                    $image_path,
+                    $workflow['ollama_url'],
+                    $workflow['ollama_model'],
+                    $workflow['ai_prompt']
+                );
                 
-                $email_sent = send_email($workflow['email_recipient'], $subject, $email_body);
-            } else {
-                $error_message = $analysis['error'];
-                write_log("KI-Analyse fehlgeschlagen für Workflow '" . $workflow['name'] . "': " . $error_message);
+                if ($analysis['success']) {
+                    // E-Mail versenden
+                    $subject = "KI-Analyse: " . $workflow['name'] . " - " . $metadata['esp_id'];
+                    $email_body = "Bildanalyse von " . basename($image_path) . "\n\n";
+                    $email_body .= "ESP-ID: " . $metadata['esp_id'] . "\n";
+                    $email_body .= "Wake Reason: " . $metadata['wake_reason'] . "\n";
+                    $email_body .= "Zeitstempel: " . $metadata['timestamp_short'] . "\n\n";
+                    $email_body .= "KI-Analyse:\n" . $analysis['result'];
+                    
+                    $email_sent = send_email($workflow['email_recipient'], $subject, $email_body);
+                } else {
+                    $error_message = $analysis['error'];
+                    write_log("KI-Analyse fehlgeschlagen für Workflow '" . $workflow['name'] . "': " . $error_message);
+                }
+            } catch (Exception $e) {
+                $error_message = "Exception bei KI-Analyse: " . $e->getMessage();
+                write_log($error_message);
+            } finally {
+                // Lock immer freigeben, auch bei Fehlern
+                release_ollama_lock();
             }
             
             // Ergebnis in Datenbank speichern
             $stmt_insert = $db->prepare("INSERT INTO processed_images (workflow_id, image_path, ai_result, email_sent, error_message) VALUES (?, ?, ?, ?, ?)");
             $stmt_insert->bindValue(1, $workflow['id'], SQLITE3_INTEGER);
             $stmt_insert->bindValue(2, $image_path, SQLITE3_TEXT);
-            $stmt_insert->bindValue(3, $analysis['success'] ? $analysis['result'] : '', SQLITE3_TEXT);
+            $stmt_insert->bindValue(3, ($analysis && $analysis['success']) ? $analysis['result'] : '', SQLITE3_TEXT);
             $stmt_insert->bindValue(4, $email_sent ? 1 : 0, SQLITE3_INTEGER);
             $stmt_insert->bindValue(5, $error_message, SQLITE3_TEXT);
             $stmt_insert->execute();
         }
     }
+}
+
+// Hilfsfunktion: Aktueller Lock-Status
+function get_ollama_lock_status() {
+    $lock_file = __DIR__ . '/ollama_processing.lock';
+    
+    if (!file_exists($lock_file)) {
+        return ['locked' => false, 'message' => 'Ollama verfügbar'];
+    }
+    
+    $lock_content = file_get_contents($lock_file);
+    if (!$lock_content) {
+        return ['locked' => true, 'message' => 'Lock-Datei beschädigt'];
+    }
+    
+    $lock_data = json_decode($lock_content, true);
+    if (!$lock_data || !isset($lock_data['timestamp'])) {
+        return ['locked' => true, 'message' => 'Ungültige Lock-Daten'];
+    }
+    
+    $age_seconds = time() - $lock_data['timestamp'];
+    $age_minutes = round($age_seconds / 60, 1);
+    
+    return [
+        'locked' => true,
+        'message' => "Ollama verarbeitet Bild (seit {$age_minutes} Min, PID: " . ($lock_data['pid'] ?? 'unknown') . ")",
+        'age_seconds' => $age_seconds,
+        'pid' => $lock_data['pid'] ?? null
+    ];
 }
 
 write_log("Request erhalten. Methode: " . $_SERVER['REQUEST_METHOD']);
@@ -183,56 +327,64 @@ if (!is_dir($uploadDir)) {
     die($errorMsg);
 }
 
-// Behandlung von POST-Requests (Bild-Upload)
+// Behandlung von POST-Requests 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    write_log("POST-Request wird bearbeitet.");
-    $imageData = file_get_contents('php://input');
+    // Prüfen ob es ein Workflow-Management Request ist (hat 'action' Parameter)
+    if (isset($_POST['action'])) {
+        write_log("Workflow-Management POST-Request wird bearbeitet.");
+        // Workflow-Management wird später in der HTML-Sektion behandelt
+        // Hier nur weiterleiten zur normalen GET-Verarbeitung
+    } else {
+        // Bild-Upload (kein 'action' Parameter, rohe Bilddaten im Body)
+        write_log("Bild-Upload POST-Request wird bearbeitet.");
+        $imageData = file_get_contents('php://input');
 
-    if ($imageData === false || empty($imageData)) {
-        http_response_code(400);
-        $errorMsg = "Fehler: Keine Bilddaten empfangen.";
-        write_log($errorMsg . " Rohdatenlänge: " . (is_string($imageData) ? strlen($imageData) : 'false/null'));
-        echo $errorMsg;
+        if ($imageData === false || empty($imageData)) {
+            http_response_code(400);
+            $errorMsg = "Fehler: Keine Bilddaten empfangen.";
+            write_log($errorMsg . " Rohdatenlänge: " . (is_string($imageData) ? strlen($imageData) : 'false/null'));
+            echo $errorMsg;
+            exit;
+        }
+        write_log("Bilddaten empfangen. Größe: " . strlen($imageData) . " Bytes.");
+
+        // Dateiname generieren (YYYYMMDD-HHMMSS_espid_wakereason_vbatXXXXmV.jpg)
+        $timestampFormatted = date('Ymd-His');
+        $espId = isset($_GET['esp_id']) ? preg_replace('/[^a-zA-Z0-9_-]/', '', $_GET['esp_id']) : 'unknownID';
+        $wakeReason = isset($_GET['wake_reason']) ? preg_replace('/[^a-zA-Z0-9_-]/', '', $_GET['wake_reason']) : 'unknownReason';
+        $vbat = isset($_GET['vbat']) ? (int)$_GET['vbat'] : null;
+
+        $filename = $timestampFormatted;
+        $filename .= '_' . $espId;
+        $filename .= '_' . $wakeReason;
+        if ($vbat !== null) {
+            $filename .= '_vbat' . $vbat . 'mV';
+        }
+        $filename .= '.jpg';
+        $filePath = $uploadDir . $filename;
+        write_log("Generierter Dateipfad: " . $filePath);
+
+        if (file_put_contents($filePath, $imageData) !== false) {
+            http_response_code(200);
+            $successMsg = "Bild erfolgreich hochgeladen und gespeichert als: " . $filename;
+            write_log($successMsg . " Sende HTTP 200.");
+            
+            // Metadaten für Workflow-Verarbeitung extrahieren
+            $metadata = get_metadata_from_filename($filename);
+            if ($metadata) {
+                write_log("Starte Workflow-Verarbeitung für Bild: " . $filename);
+                process_workflows($filePath, $metadata, $db);
+            }
+            
+            echo $successMsg;
+        } else {
+            http_response_code(500);
+            $errorMsg = "Fehler: Bild konnte nicht gespeichert werden unter " . $filePath;
+            write_log($errorMsg . " Sende HTTP 500.");
+            echo $errorMsg;
+        }
         exit;
     }
-    write_log("Bilddaten empfangen. Größe: " . strlen($imageData) . " Bytes.");
-
-    // Dateiname generieren (YYYYMMDD-HHMMSS_espid_wakereason_vbatXXXXmV.jpg)
-    $timestampFormatted = date('Ymd-His');
-    $espId = isset($_GET['esp_id']) ? preg_replace('/[^a-zA-Z0-9_-]/', '', $_GET['esp_id']) : 'unknownID';
-    $wakeReason = isset($_GET['wake_reason']) ? preg_replace('/[^a-zA-Z0-9_-]/', '', $_GET['wake_reason']) : 'unknownReason';
-    $vbat = isset($_GET['vbat']) ? (int)$_GET['vbat'] : null;
-
-    $filename = $timestampFormatted;
-    $filename .= '_' . $espId;
-    $filename .= '_' . $wakeReason;
-    if ($vbat !== null) {
-        $filename .= '_vbat' . $vbat . 'mV';
-    }
-    $filename .= '.jpg';
-    $filePath = $uploadDir . $filename;
-    write_log("Generierter Dateipfad: " . $filePath);
-
-    if (file_put_contents($filePath, $imageData) !== false) {
-        http_response_code(200);
-        $successMsg = "Bild erfolgreich hochgeladen und gespeichert als: " . $filename;
-        write_log($successMsg . " Sende HTTP 200.");
-        
-        // Metadaten für Workflow-Verarbeitung extrahieren
-        $metadata = get_metadata_from_filename($filename);
-        if ($metadata) {
-            write_log("Starte Workflow-Verarbeitung für Bild: " . $filename);
-            process_workflows($filePath, $metadata, $db);
-        }
-        
-        echo $successMsg;
-    } else {
-        http_response_code(500);
-        $errorMsg = "Fehler: Bild konnte nicht gespeichert werden unter " . $filePath;
-        write_log($errorMsg . " Sende HTTP 500.");
-        echo $errorMsg;
-    }
-    exit;
 }
 
 write_log("GET-Request wird bearbeitet (HTML-Seite wird angezeigt).");
@@ -752,6 +904,12 @@ $calendar_months = generate_calendar($calendar_data);
             padding: 0 20px;
         }
         
+        .workflow-header-right {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+        
         .workflow-header h2 {
             font-size: 1.8rem;
             font-weight: 600;
@@ -952,6 +1110,50 @@ $calendar_months = generate_calendar($calendar_data);
         .form-actions button[type="button"]:hover {
             background: #e5e5ea;
         }
+        
+        .ollama-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 500;
+            backdrop-filter: blur(10px);
+        }
+        
+        .status-ready {
+            background: rgba(48, 209, 88, 0.1);
+            color: #30d158;
+            border: 1px solid rgba(48, 209, 88, 0.3);
+        }
+        
+        .status-busy {
+            background: rgba(255, 149, 0, 0.1);
+            color: #ff9500;
+            border: 1px solid rgba(255, 149, 0, 0.3);
+        }
+        
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        
+        .status-ready .status-indicator {
+            background: #30d158;
+        }
+        
+        .status-busy .status-indicator {
+            background: #ff9500;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
 
         @media (max-width: 768px) {
             .container {
@@ -980,6 +1182,11 @@ $calendar_months = generate_calendar($calendar_data);
                 flex-direction: column;
                 gap: 15px;
                 align-items: stretch;
+            }
+            
+            .workflow-header-right {
+                flex-direction: column;
+                gap: 10px;
             }
             
             .workflow-card {
@@ -1125,7 +1332,17 @@ $calendar_months = generate_calendar($calendar_data);
         <div class="workflow-management">
             <div class="workflow-header">
                 <h2>KI-Analyse Workflows</h2>
-                <button class="btn-primary" onclick="showCreateWorkflowModal()">Neuen Workflow erstellen</button>
+                <div class="workflow-header-right">
+                    <?php 
+                    $lock_status = get_ollama_lock_status();
+                    $status_class = $lock_status['locked'] ? 'status-busy' : 'status-ready';
+                    ?>
+                    <div class="ollama-status <?php echo $status_class; ?>">
+                        <span class="status-indicator"></span>
+                        <?php echo htmlspecialchars($lock_status['message']); ?>
+                    </div>
+                    <button class="btn-primary" onclick="showCreateWorkflowModal()">Neuen Workflow erstellen</button>
+                </div>
             </div>
 
             <div class="workflows-list">
@@ -1147,7 +1364,11 @@ $calendar_months = generate_calendar($calendar_data);
                         if (!empty($workflow['filter_wake_reason'])) echo 'Wake=' . htmlspecialchars($workflow['filter_wake_reason']);
                         if (empty($workflow['filter_esp_id']) && empty($workflow['filter_wake_reason'])) echo 'Alle Bilder';
                         echo '</span>';
-                        echo '<span class="detail">E-Mail: ' . htmlspecialchars($workflow['email_recipient']) . '</span>';
+                        $display_email = $workflow['email_recipient'];
+                        if (strpos($display_email, '@') === false) {
+                            $display_email .= '@sensem.de';
+                        }
+                        echo '<span class="detail">E-Mail: ' . htmlspecialchars($display_email) . '</span>';
                         echo '<span class="detail">Verarbeitet: ' . $workflow['processed_count'] . ' Bilder</span>';
                         echo '</div>';
                         echo '</div>';
@@ -1225,8 +1446,8 @@ $calendar_months = generate_calendar($calendar_data);
                     </div>
                     
                     <div class="form-group">
-                        <label for="email_recipient">E-Mail-Empfänger:</label>
-                        <input type="email" id="email_recipient" name="email_recipient" required>
+                        <label for="email_recipient">Benutzername (sensem.de):</label>
+                        <input type="text" id="email_recipient" name="email_recipient" required placeholder="z.B. test">
                     </div>
                     
                     <div class="form-actions">
