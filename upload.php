@@ -460,6 +460,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+// AJAX-Endpoint für Workflow-Daten
+if (isset($_GET['get_workflow'])) {
+    $workflow_id = (int)$_GET['get_workflow'];
+    $stmt = $db->prepare("SELECT * FROM workflows WHERE id = ?");
+    $stmt->bindValue(1, $workflow_id, SQLITE3_INTEGER);
+    $result = $stmt->execute();
+    $workflow = $result->fetchArray(SQLITE3_ASSOC);
+    
+    header('Content-Type: application/json');
+    if ($workflow) {
+        echo json_encode(['success' => true, 'workflow' => $workflow]);
+    } else {
+        echo json_encode(['success' => false, 'error' => 'Workflow nicht gefunden']);
+    }
+    exit;
+}
+
 write_log("GET-Request wird bearbeitet (HTML-Seite wird angezeigt).");
 
 // Funktion zum Extrahieren von Metadaten für Filter
@@ -535,6 +552,21 @@ if (isset($_POST['action'])) {
         $stmt->bindValue(1, $workflow_id, SQLITE3_INTEGER);
         $stmt->execute();
         write_log("Workflow-Status geändert für ID: " . $workflow_id);
+        header("Location: ?view=workflows");
+        exit;
+    } elseif ($action === 'edit_workflow') {
+        $workflow_id = (int)$_POST['workflow_id'];
+        $stmt = $db->prepare("UPDATE workflows SET name=?, filter_esp_id=?, filter_wake_reason=?, ollama_url=?, ollama_model=?, ai_prompt=?, email_recipient=? WHERE id=?");
+        $stmt->bindValue(1, $_POST['name'], SQLITE3_TEXT);
+        $stmt->bindValue(2, $_POST['filter_esp_id'], SQLITE3_TEXT);
+        $stmt->bindValue(3, $_POST['filter_wake_reason'], SQLITE3_TEXT);
+        $stmt->bindValue(4, $_POST['ollama_url'], SQLITE3_TEXT);
+        $stmt->bindValue(5, $_POST['ollama_model'], SQLITE3_TEXT);
+        $stmt->bindValue(6, $_POST['ai_prompt'], SQLITE3_TEXT);
+        $stmt->bindValue(7, $_POST['email_recipient'], SQLITE3_TEXT);
+        $stmt->bindValue(8, $workflow_id, SQLITE3_INTEGER);
+        $stmt->execute();
+        write_log("Workflow bearbeitet ID: " . $workflow_id . " - " . $_POST['name']);
         header("Location: ?view=workflows");
         exit;
     } elseif ($action === 'delete_workflow') {
@@ -1173,7 +1205,7 @@ $calendar_months = generate_calendar($calendar_data);
             align-items: flex-start;
         }
         
-        .btn-toggle, .btn-delete {
+        .btn-toggle, .btn-delete, .btn-edit {
             padding: 8px 16px;
             border: none;
             border-radius: 6px;
@@ -1198,6 +1230,15 @@ $calendar_months = generate_calendar($calendar_data);
         
         .btn-delete:hover {
             background: #d70015;
+        }
+        
+        .btn-edit {
+            background: #34c759;
+            color: white;
+        }
+        
+        .btn-edit:hover {
+            background: #28a745;
         }
         
         .no-workflows {
@@ -1626,6 +1667,7 @@ $calendar_months = generate_calendar($calendar_data);
                         echo '</div>';
                         echo '</div>';
                         echo '<div class="workflow-actions">';
+                        echo '<button type="button" class="btn-edit" onclick="showEditWorkflowModal(' . $workflow['id'] . ')">Bearbeiten</button>';
                         echo '<form method="post" style="display: inline;">';
                         echo '<input type="hidden" name="action" value="toggle_workflow">';
                         echo '<input type="hidden" name="workflow_id" value="' . $workflow['id'] . '">';
@@ -1710,6 +1752,72 @@ $calendar_months = generate_calendar($calendar_data);
                 </form>
             </div>
         </div>
+
+        <!-- Edit Workflow Modal -->
+        <div id="editWorkflowModal" class="modal" style="display: none;">
+            <div class="modal-content workflow-modal">
+                <button class="close-modal" onclick="hideEditWorkflowModal()">&times;</button>
+                <h3>Workflow bearbeiten</h3>
+                <form method="post" class="workflow-form" id="editWorkflowForm">
+                    <input type="hidden" name="action" value="edit_workflow">
+                    <input type="hidden" name="workflow_id" id="edit_workflow_id">
+                    
+                    <div class="form-group">
+                        <label for="edit_name">Workflow-Name:</label>
+                        <input type="text" id="edit_name" name="name" required>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="edit_filter_esp_id">ESP-ID Filter (optional):</label>
+                            <select name="filter_esp_id" id="edit_filter_esp_id">
+                                <option value="">Alle ESP-IDs</option>
+                                <?php foreach ($esp_ids as $id): ?>
+                                    <option value="<?php echo htmlspecialchars($id); ?>"><?php echo htmlspecialchars($id); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="edit_filter_wake_reason">Wake Reason Filter (optional):</label>
+                            <select name="filter_wake_reason" id="edit_filter_wake_reason">
+                                <option value="">Alle Wake Reasons</option>
+                                <?php foreach ($wake_reasons as $reason): ?>
+                                    <option value="<?php echo htmlspecialchars($reason); ?>"><?php echo htmlspecialchars($reason); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="edit_ollama_url">Ollama URL:</label>
+                            <input type="url" id="edit_ollama_url" name="ollama_url" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="edit_ollama_model">Modell-Name:</label>
+                            <input type="text" id="edit_ollama_model" name="ollama_model" required>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="edit_ai_prompt">KI-Prompt für Bildanalyse:</label>
+                        <textarea id="edit_ai_prompt" name="ai_prompt" rows="4" required></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="edit_email_recipient">Benutzername (sensem.de):</label>
+                        <input type="text" id="edit_email_recipient" name="email_recipient" required>
+                    </div>
+                    
+                    <div class="form-actions">
+                        <button type="button" onclick="hideEditWorkflowModal()">Abbrechen</button>
+                        <button type="submit" class="btn-primary">Änderungen speichern</button>
+                    </div>
+                </form>
+            </div>
+        </div>
         <?php endif; ?>
     </div>
 
@@ -1758,11 +1866,46 @@ $calendar_months = generate_calendar($calendar_data);
             document.getElementById('createWorkflowModal').style.display = 'none';
         }
 
-        // Close workflow modal when clicking outside
+        function showEditWorkflowModal(workflowId) {
+            // Workflow-Daten per AJAX laden
+            fetch('?view=workflows&get_workflow=' + workflowId)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        document.getElementById('edit_workflow_id').value = data.workflow.id;
+                        document.getElementById('edit_name').value = data.workflow.name;
+                        document.getElementById('edit_filter_esp_id').value = data.workflow.filter_esp_id;
+                        document.getElementById('edit_filter_wake_reason').value = data.workflow.filter_wake_reason;
+                        document.getElementById('edit_ollama_url').value = data.workflow.ollama_url;
+                        document.getElementById('edit_ollama_model').value = data.workflow.ollama_model;
+                        document.getElementById('edit_ai_prompt').value = data.workflow.ai_prompt;
+                        document.getElementById('edit_email_recipient').value = data.workflow.email_recipient;
+                        
+                        document.getElementById('editWorkflowModal').style.display = 'block';
+                    } else {
+                        alert('Fehler beim Laden der Workflow-Daten');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Fehler beim Laden der Workflow-Daten');
+                });
+        }
+
+        function hideEditWorkflowModal() {
+            document.getElementById('editWorkflowModal').style.display = 'none';
+        }
+
+        // Close workflow modals when clicking outside
         document.addEventListener('click', function(event) {
-            var workflowModal = document.getElementById('createWorkflowModal');
-            if (event.target === workflowModal) {
+            var createModal = document.getElementById('createWorkflowModal');
+            var editModal = document.getElementById('editWorkflowModal');
+            
+            if (event.target === createModal) {
                 hideCreateWorkflowModal();
+            }
+            if (event.target === editModal) {
+                hideEditWorkflowModal();
             }
         });
     </script>
