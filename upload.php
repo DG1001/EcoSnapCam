@@ -175,25 +175,98 @@ function analyze_image_with_ollama($image_path, $ollama_url, $model, $prompt) {
     return ['success' => true, 'result' => $result['response']];
 }
 
-// E-Mail versenden
+// E-Mail versenden via direktes SMTP
 function send_email($recipient, $subject, $message) {
     // Automatisch @sensem.de anhängen falls nicht vorhanden
     if (strpos($recipient, '@') === false) {
         $recipient = $recipient . '@sensem.de';
     }
     
-    $headers = "From: ecosnapcam@sensem.de\r\n";
-    $headers .= "Content-Type: text/plain; charset=UTF-8\r\n";
+    $smtp_server = 'sensem.de';
+    $smtp_port = 25;
+    $from = 'ecosnapcam@sensem.de';
     
-    $success = mail($recipient, $subject, $message, $headers);
-    
-    if (!$success) {
-        write_log("E-Mail konnte nicht gesendet werden an: " . $recipient);
+    // SMTP-Verbindung aufbauen
+    $socket = fsockopen($smtp_server, $smtp_port, $errno, $errstr, 10);
+    if (!$socket) {
+        write_log("SMTP-Verbindung fehlgeschlagen: $errstr ($errno)");
         return false;
     }
     
-    write_log("E-Mail erfolgreich gesendet an: " . $recipient);
-    return true;
+    // SMTP-Response lesen
+    function smtp_read($socket) {
+        $response = '';
+        while ($line = fgets($socket)) {
+            $response .= $line;
+            if (substr($line, 3, 1) == ' ') break;
+        }
+        return trim($response);
+    }
+    
+    // SMTP-Kommando senden
+    function smtp_send($socket, $command) {
+        fputs($socket, $command . "\r\n");
+        return smtp_read($socket);
+    }
+    
+    try {
+        // Willkommensnachricht lesen
+        $response = smtp_read($socket);
+        write_log("SMTP Connect: " . $response);
+        
+        // EHLO senden
+        $response = smtp_send($socket, "EHLO localhost");
+        write_log("SMTP EHLO: " . $response);
+        
+        // MAIL FROM
+        $response = smtp_send($socket, "MAIL FROM: <$from>");
+        write_log("SMTP MAIL FROM: " . $response);
+        if (substr($response, 0, 3) != '250') {
+            throw new Exception("MAIL FROM failed: " . $response);
+        }
+        
+        // RCPT TO
+        $response = smtp_send($socket, "RCPT TO: <$recipient>");
+        write_log("SMTP RCPT TO: " . $response);
+        if (substr($response, 0, 3) != '250') {
+            throw new Exception("RCPT TO failed: " . $response);
+        }
+        
+        // DATA
+        $response = smtp_send($socket, "DATA");
+        write_log("SMTP DATA: " . $response);
+        if (substr($response, 0, 3) != '354') {
+            throw new Exception("DATA failed: " . $response);
+        }
+        
+        // E-Mail-Header und -Body
+        $email_data = "From: $from\r\n";
+        $email_data .= "To: $recipient\r\n";
+        $email_data .= "Subject: $subject\r\n";
+        $email_data .= "Content-Type: text/plain; charset=UTF-8\r\n";
+        $email_data .= "Date: " . date('r') . "\r\n";
+        $email_data .= "\r\n";
+        $email_data .= $message . "\r\n";
+        $email_data .= ".";
+        
+        $response = smtp_send($socket, $email_data);
+        write_log("SMTP Email Data: " . $response);
+        if (substr($response, 0, 3) != '250') {
+            throw new Exception("Email data failed: " . $response);
+        }
+        
+        // QUIT
+        smtp_send($socket, "QUIT");
+        fclose($socket);
+        
+        write_log("E-Mail erfolgreich gesendet an: " . $recipient);
+        return true;
+        
+    } catch (Exception $e) {
+        write_log("SMTP-Fehler: " . $e->getMessage());
+        fclose($socket);
+        return false;
+    }
 }
 
 // Workflows verarbeiten
@@ -438,41 +511,104 @@ $calendar_data = [];
 $view_mode = isset($_GET['view']) ? $_GET['view'] : 'recent';
 $selected_date = isset($_GET['date']) ? $_GET['date'] : '';
 
-// Workflow-Management Actions
-if ($view_mode === 'workflows') {
-    if (isset($_POST['action'])) {
-        $action = $_POST['action'];
+// Action Handling für alle POST-Requests mit 'action' Parameter
+if (isset($_POST['action'])) {
+    $action = $_POST['action'];
+    
+    // Workflow-Management Actions
+    if ($action === 'create_workflow') {
+        $stmt = $db->prepare("INSERT INTO workflows (name, filter_esp_id, filter_wake_reason, ollama_url, ollama_model, ai_prompt, email_recipient) VALUES (?, ?, ?, ?, ?, ?, ?)");
+        $stmt->bindValue(1, $_POST['name'], SQLITE3_TEXT);
+        $stmt->bindValue(2, $_POST['filter_esp_id'], SQLITE3_TEXT);
+        $stmt->bindValue(3, $_POST['filter_wake_reason'], SQLITE3_TEXT);
+        $stmt->bindValue(4, $_POST['ollama_url'], SQLITE3_TEXT);
+        $stmt->bindValue(5, $_POST['ollama_model'], SQLITE3_TEXT);
+        $stmt->bindValue(6, $_POST['ai_prompt'], SQLITE3_TEXT);
+        $stmt->bindValue(7, $_POST['email_recipient'], SQLITE3_TEXT);
+        $stmt->execute();
+        write_log("Neuer Workflow erstellt: " . $_POST['name']);
+        header("Location: ?view=workflows");
+        exit;
+    } elseif ($action === 'toggle_workflow') {
+        $workflow_id = (int)$_POST['workflow_id'];
+        $stmt = $db->prepare("UPDATE workflows SET active = NOT active WHERE id = ?");
+        $stmt->bindValue(1, $workflow_id, SQLITE3_INTEGER);
+        $stmt->execute();
+        write_log("Workflow-Status geändert für ID: " . $workflow_id);
+        header("Location: ?view=workflows");
+        exit;
+    } elseif ($action === 'delete_workflow') {
+        $workflow_id = (int)$_POST['workflow_id'];
+        $stmt = $db->prepare("DELETE FROM processed_images WHERE workflow_id = ?");
+        $stmt->bindValue(1, $workflow_id, SQLITE3_INTEGER);
+        $stmt->execute();
+        $stmt = $db->prepare("DELETE FROM workflows WHERE id = ?");
+        $stmt->bindValue(1, $workflow_id, SQLITE3_INTEGER);
+        $stmt->execute();
+        write_log("Workflow gelöscht ID: " . $workflow_id);
+        header("Location: ?view=workflows");
+        exit;
+    }
+    
+    // Image Actions
+    elseif ($action === 'delete_image') {
+        $image_path = $_POST['image_path'] ?? '';
+        $current_view = $_POST['current_view'] ?? 'recent';
+        $current_date = $_POST['current_date'] ?? '';
         
-        if ($action === 'create_workflow') {
-            $stmt = $db->prepare("INSERT INTO workflows (name, filter_esp_id, filter_wake_reason, ollama_url, ollama_model, ai_prompt, email_recipient) VALUES (?, ?, ?, ?, ?, ?, ?)");
-            $stmt->bindValue(1, $_POST['name'], SQLITE3_TEXT);
-            $stmt->bindValue(2, $_POST['filter_esp_id'], SQLITE3_TEXT);
-            $stmt->bindValue(3, $_POST['filter_wake_reason'], SQLITE3_TEXT);
-            $stmt->bindValue(4, $_POST['ollama_url'], SQLITE3_TEXT);
-            $stmt->bindValue(5, $_POST['ollama_model'], SQLITE3_TEXT);
-            $stmt->bindValue(6, $_POST['ai_prompt'], SQLITE3_TEXT);
-            $stmt->bindValue(7, $_POST['email_recipient'], SQLITE3_TEXT);
-            $stmt->execute();
-            write_log("Neuer Workflow erstellt: " . $_POST['name']);
-        } elseif ($action === 'toggle_workflow') {
-            $workflow_id = (int)$_POST['workflow_id'];
-            $stmt = $db->prepare("UPDATE workflows SET active = NOT active WHERE id = ?");
-            $stmt->bindValue(1, $workflow_id, SQLITE3_INTEGER);
-            $stmt->execute();
-            write_log("Workflow-Status geändert für ID: " . $workflow_id);
-        } elseif ($action === 'delete_workflow') {
-            $workflow_id = (int)$_POST['workflow_id'];
-            $stmt = $db->prepare("DELETE FROM processed_images WHERE workflow_id = ?");
-            $stmt->bindValue(1, $workflow_id, SQLITE3_INTEGER);
-            $stmt->execute();
-            $stmt = $db->prepare("DELETE FROM workflows WHERE id = ?");
-            $stmt->bindValue(1, $workflow_id, SQLITE3_INTEGER);
-            $stmt->execute();
-            write_log("Workflow gelöscht ID: " . $workflow_id);
+        if (!empty($image_path) && file_exists($image_path)) {
+            if (unlink($image_path)) {
+                write_log("Bild gelöscht: " . $image_path);
+                $success_msg = "Bild erfolgreich gelöscht.";
+            } else {
+                write_log("Fehler beim Löschen von Bild: " . $image_path);
+                $error_msg = "Fehler beim Löschen des Bildes.";
+            }
+        } else {
+            write_log("Versuch ein nicht existierendes Bild zu löschen: " . $image_path);
+            $error_msg = "Bild nicht gefunden.";
         }
         
-        // Redirect to prevent form resubmission
-        header("Location: ?view=workflows");
+        // Redirect zurück zur aktuellen Ansicht
+        $redirect_url = "?view=" . urlencode($current_view);
+        if (!empty($current_date)) {
+            $redirect_url .= "&date=" . urlencode($current_date);
+        }
+        if (isset($success_msg)) $redirect_url .= "&msg=" . urlencode($success_msg);
+        if (isset($error_msg)) $redirect_url .= "&error=" . urlencode($error_msg);
+        
+        header("Location: " . $redirect_url);
+        exit;
+    }
+    
+    elseif ($action === 'analyze_image') {
+        $image_path = $_POST['image_path'] ?? '';
+        $current_view = $_POST['current_view'] ?? 'recent';
+        $current_date = $_POST['current_date'] ?? '';
+        
+        if (!empty($image_path) && file_exists($image_path)) {
+            // Metadaten extrahieren
+            $metadata = get_metadata_from_filename(basename($image_path));
+            if ($metadata) {
+                write_log("Manuelle KI-Analyse gestartet für: " . basename($image_path));
+                process_workflows($image_path, $metadata, $db);
+                $success_msg = "KI-Analyse wurde für alle aktiven Workflows gestartet.";
+            } else {
+                $error_msg = "Metadaten konnten nicht extrahiert werden.";
+            }
+        } else {
+            $error_msg = "Bild nicht gefunden.";
+        }
+        
+        // Redirect zurück zur aktuellen Ansicht
+        $redirect_url = "?view=" . urlencode($current_view);
+        if (!empty($current_date)) {
+            $redirect_url .= "&date=" . urlencode($current_date);
+        }
+        if (isset($success_msg)) $redirect_url .= "&msg=" . urlencode($success_msg);
+        if (isset($error_msg)) $redirect_url .= "&error=" . urlencode($error_msg);
+        
+        header("Location: " . $redirect_url);
         exit;
     }
 }
@@ -797,7 +933,6 @@ $calendar_months = generate_calendar($calendar_data);
             border: 1px solid rgba(255, 255, 255, 0.2);
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
             transition: all 0.3s ease;
-            cursor: pointer;
         }
         
         .image-card:hover {
@@ -805,7 +940,11 @@ $calendar_months = generate_calendar($calendar_data);
             box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
         }
         
-        .image-card img {
+        .image-container {
+            cursor: pointer;
+        }
+        
+        .image-container img {
             width: 100%;
             height: 200px;
             object-fit: cover;
@@ -823,9 +962,53 @@ $calendar_months = generate_calendar($calendar_data);
             margin-bottom: 5px;
         }
         
+        .image-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 5px;
+        }
+        
         .image-meta {
             font-size: 12px;
             color: #86868b;
+        }
+        
+        .image-actions {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .action-btn {
+            background: none;
+            border: none;
+            padding: 6px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .action-btn:hover {
+            transform: scale(1.1);
+        }
+        
+        .ai-btn {
+            color: #007aff;
+        }
+        
+        .ai-btn:hover {
+            background: rgba(0, 122, 255, 0.1);
+        }
+        
+        .delete-btn {
+            color: #ff3b30;
+        }
+        
+        .delete-btn:hover {
+            background: rgba(255, 59, 48, 0.1);
         }
         
         .no-images {
@@ -1154,6 +1337,26 @@ $calendar_months = generate_calendar($calendar_data);
             0%, 100% { opacity: 1; }
             50% { opacity: 0.5; }
         }
+        
+        .notification {
+            padding: 12px 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        
+        .notification.success {
+            background: rgba(48, 209, 88, 0.1);
+            color: #30d158;
+            border: 1px solid rgba(48, 209, 88, 0.3);
+        }
+        
+        .notification.error {
+            background: rgba(255, 59, 48, 0.1);
+            color: #ff3b30;
+            border: 1px solid rgba(255, 59, 48, 0.3);
+        }
 
         @media (max-width: 768px) {
             .container {
@@ -1225,6 +1428,18 @@ $calendar_months = generate_calendar($calendar_data);
             <button class="toggle-button <?php echo $view_mode === 'workflows' ? 'active' : ''; ?>" 
                     onclick="setView('workflows')">KI Workflows</button>
         </div>
+
+        <?php if (isset($_GET['msg'])): ?>
+        <div class="notification success">
+            <?php echo htmlspecialchars($_GET['msg']); ?>
+        </div>
+        <?php endif; ?>
+
+        <?php if (isset($_GET['error'])): ?>
+        <div class="notification error">
+            <?php echo htmlspecialchars($_GET['error']); ?>
+        </div>
+        <?php endif; ?>
 
         <?php if ($view_mode === 'recent' || $view_mode === 'date'): ?>
         <div class="filters">
@@ -1312,13 +1527,51 @@ $calendar_months = generate_calendar($calendar_data);
                         $formattedDate = date('d.m.Y H:i:s', $fileModTime);
                     }
 
-                    echo '<div class="image-card" onclick="openModal(this)">';
+                    echo '<div class="image-card">';
+                    echo '<div class="image-container" onclick="openModal(this)">';
                     echo '<img src="' . htmlspecialchars($file) . '" alt="' . htmlspecialchars($fullFileName) . '" data-filename="' . htmlspecialchars($fullFileName) . '">';
+                    echo '</div>';
                     echo '<div class="image-info">';
                     echo '<div class="image-title">' . htmlspecialchars($displayFileName) . '</div>';
+                    echo '<div class="image-footer">';
                     echo '<div class="image-meta">' . $formattedDate . '</div>';
-                    echo '</div>';
-                    echo '</div>';
+                    echo '<div class="image-actions">';
+                    
+                    // KI-Analyse Button
+                    echo '<form method="post" style="display: inline;" onclick="event.stopPropagation();">';
+                    echo '<input type="hidden" name="action" value="analyze_image">';
+                    echo '<input type="hidden" name="image_path" value="' . htmlspecialchars($file) . '">';
+                    echo '<input type="hidden" name="current_view" value="' . htmlspecialchars($view_mode) . '">';
+                    if ($selected_date) echo '<input type="hidden" name="current_date" value="' . htmlspecialchars($selected_date) . '">';
+                    echo '<button type="submit" class="action-btn ai-btn" title="KI-Analyse senden">';
+                    echo '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">';
+                    echo '<path d="M9 19c-5 0-8-3-8-8s3-8 8-8 8 3 8 8-3 8-8 8"/>';
+                    echo '<path d="M17 17l-5-5"/>';
+                    echo '<circle cx="19" cy="5" r="2"/>';
+                    echo '</svg>';
+                    echo '</button>';
+                    echo '</form>';
+                    
+                    // Löschen Button
+                    echo '<form method="post" style="display: inline;" onclick="event.stopPropagation();" onsubmit="return confirm(\'Bild wirklich löschen?\');">';
+                    echo '<input type="hidden" name="action" value="delete_image">';
+                    echo '<input type="hidden" name="image_path" value="' . htmlspecialchars($file) . '">';
+                    echo '<input type="hidden" name="current_view" value="' . htmlspecialchars($view_mode) . '">';
+                    if ($selected_date) echo '<input type="hidden" name="current_date" value="' . htmlspecialchars($selected_date) . '">';
+                    echo '<button type="submit" class="action-btn delete-btn" title="Bild löschen">';
+                    echo '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">';
+                    echo '<polyline points="3,6 5,6 21,6"/>';
+                    echo '<path d="M19,6v14a2,2 0 0,1-2,2H7a2,2 0 0,1-2-2V6m3,0V4a2,2 0 0,1,2-2h4a2,2 0 0,1,2,2v2"/>';
+                    echo '<line x1="10" y1="11" x2="10" y2="17"/>';
+                    echo '<line x1="14" y1="11" x2="14" y2="17"/>';
+                    echo '</svg>';
+                    echo '</button>';
+                    echo '</form>';
+                    
+                    echo '</div>'; // image-actions
+                    echo '</div>'; // image-footer
+                    echo '</div>'; // image-info
+                    echo '</div>'; // image-card
                 }
             } else {
                 $message = $view_mode === 'date' ? 'No images found for the selected date.' : 'No images from the last 24 hours.';
