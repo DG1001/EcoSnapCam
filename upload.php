@@ -14,7 +14,156 @@ function write_log($message) {
     file_put_contents($logFile, $logMessage, FILE_APPEND);
 }
 
+// Datenbankinitialisierung für KI-Workflows
+function init_database() {
+    $db_path = __DIR__ . '/workflows.db';
+    $db = new SQLite3($db_path);
+    
+    // Workflows-Tabelle
+    $db->exec("CREATE TABLE IF NOT EXISTS workflows (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        active BOOLEAN DEFAULT 1,
+        filter_esp_id TEXT DEFAULT '',
+        filter_wake_reason TEXT DEFAULT '',
+        ollama_url TEXT NOT NULL,
+        ollama_model TEXT NOT NULL,
+        ai_prompt TEXT NOT NULL,
+        email_recipient TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )");
+    
+    // Verarbeitete Bilder-Tabelle
+    $db->exec("CREATE TABLE IF NOT EXISTS processed_images (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        workflow_id INTEGER,
+        image_path TEXT NOT NULL,
+        ai_result TEXT,
+        email_sent BOOLEAN DEFAULT 0,
+        error_message TEXT DEFAULT '',
+        processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(workflow_id) REFERENCES workflows(id)
+    )");
+    
+    return $db;
+}
+
+// Ollama API Integration
+function analyze_image_with_ollama($image_path, $ollama_url, $model, $prompt) {
+    $image_data = base64_encode(file_get_contents($image_path));
+    
+    $payload = [
+        'model' => $model,
+        'prompt' => $prompt,
+        'images' => [$image_data],
+        'stream' => false
+    ];
+    
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, rtrim($ollama_url, '/') . '/api/generate');
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json'
+    ]);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 120); // 2 Minuten Timeout
+    
+    $response = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $error = curl_error($ch);
+    curl_close($ch);
+    
+    if ($error) {
+        write_log("Ollama CURL Error: " . $error);
+        return ['success' => false, 'error' => $error];
+    }
+    
+    if ($http_code !== 200) {
+        write_log("Ollama HTTP Error: " . $http_code . " - " . $response);
+        return ['success' => false, 'error' => "HTTP $http_code: $response"];
+    }
+    
+    $result = json_decode($response, true);
+    if (!$result || !isset($result['response'])) {
+        write_log("Ollama JSON Error: " . $response);
+        return ['success' => false, 'error' => 'Invalid JSON response'];
+    }
+    
+    return ['success' => true, 'result' => $result['response']];
+}
+
+// E-Mail versenden
+function send_email($recipient, $subject, $message) {
+    $headers = "From: ecosnapcam@sensem.de\r\n";
+    $headers .= "Content-Type: text/plain; charset=UTF-8\r\n";
+    
+    $success = mail($recipient, $subject, $message, $headers);
+    
+    if (!$success) {
+        write_log("E-Mail konnte nicht gesendet werden an: " . $recipient);
+        return false;
+    }
+    
+    write_log("E-Mail erfolgreich gesendet an: " . $recipient);
+    return true;
+}
+
+// Workflows verarbeiten
+function process_workflows($image_path, $metadata, $db) {
+    $stmt = $db->prepare("SELECT * FROM workflows WHERE active = 1");
+    $result = $stmt->execute();
+    
+    while ($workflow = $result->fetchArray(SQLITE3_ASSOC)) {
+        // Filter prüfen
+        $esp_match = empty($workflow['filter_esp_id']) || $workflow['filter_esp_id'] === $metadata['esp_id'];
+        $wake_match = empty($workflow['filter_wake_reason']) || $workflow['filter_wake_reason'] === $metadata['wake_reason'];
+        
+        if ($esp_match && $wake_match) {
+            write_log("Workflow '" . $workflow['name'] . "' matched für Bild: " . basename($image_path));
+            
+            // KI-Analyse durchführen
+            $analysis = analyze_image_with_ollama(
+                $image_path,
+                $workflow['ollama_url'],
+                $workflow['ollama_model'],
+                $workflow['ai_prompt']
+            );
+            
+            $email_sent = false;
+            $error_message = '';
+            
+            if ($analysis['success']) {
+                // E-Mail versenden
+                $subject = "KI-Analyse: " . $workflow['name'] . " - " . $metadata['esp_id'];
+                $email_body = "Bildanalyse von " . basename($image_path) . "\n\n";
+                $email_body .= "ESP-ID: " . $metadata['esp_id'] . "\n";
+                $email_body .= "Wake Reason: " . $metadata['wake_reason'] . "\n";
+                $email_body .= "Zeitstempel: " . $metadata['timestamp_short'] . "\n\n";
+                $email_body .= "KI-Analyse:\n" . $analysis['result'];
+                
+                $email_sent = send_email($workflow['email_recipient'], $subject, $email_body);
+            } else {
+                $error_message = $analysis['error'];
+                write_log("KI-Analyse fehlgeschlagen für Workflow '" . $workflow['name'] . "': " . $error_message);
+            }
+            
+            // Ergebnis in Datenbank speichern
+            $stmt_insert = $db->prepare("INSERT INTO processed_images (workflow_id, image_path, ai_result, email_sent, error_message) VALUES (?, ?, ?, ?, ?)");
+            $stmt_insert->bindValue(1, $workflow['id'], SQLITE3_INTEGER);
+            $stmt_insert->bindValue(2, $image_path, SQLITE3_TEXT);
+            $stmt_insert->bindValue(3, $analysis['success'] ? $analysis['result'] : '', SQLITE3_TEXT);
+            $stmt_insert->bindValue(4, $email_sent ? 1 : 0, SQLITE3_INTEGER);
+            $stmt_insert->bindValue(5, $error_message, SQLITE3_TEXT);
+            $stmt_insert->execute();
+        }
+    }
+}
+
 write_log("Request erhalten. Methode: " . $_SERVER['REQUEST_METHOD']);
+
+// Datenbank initialisieren
+$db = init_database();
 
 // Verzeichnis für die Uploads
 $uploadDir = 'uploads/';
@@ -68,6 +217,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         http_response_code(200);
         $successMsg = "Bild erfolgreich hochgeladen und gespeichert als: " . $filename;
         write_log($successMsg . " Sende HTTP 200.");
+        
+        // Metadaten für Workflow-Verarbeitung extrahieren
+        $metadata = get_metadata_from_filename($filename);
+        if ($metadata) {
+            write_log("Starte Workflow-Verarbeitung für Bild: " . $filename);
+            process_workflows($filePath, $metadata, $db);
+        }
+        
         echo $successMsg;
     } else {
         http_response_code(500);
@@ -128,6 +285,45 @@ $calendar_data = [];
 // Current view mode
 $view_mode = isset($_GET['view']) ? $_GET['view'] : 'recent';
 $selected_date = isset($_GET['date']) ? $_GET['date'] : '';
+
+// Workflow-Management Actions
+if ($view_mode === 'workflows') {
+    if (isset($_POST['action'])) {
+        $action = $_POST['action'];
+        
+        if ($action === 'create_workflow') {
+            $stmt = $db->prepare("INSERT INTO workflows (name, filter_esp_id, filter_wake_reason, ollama_url, ollama_model, ai_prompt, email_recipient) VALUES (?, ?, ?, ?, ?, ?, ?)");
+            $stmt->bindValue(1, $_POST['name'], SQLITE3_TEXT);
+            $stmt->bindValue(2, $_POST['filter_esp_id'], SQLITE3_TEXT);
+            $stmt->bindValue(3, $_POST['filter_wake_reason'], SQLITE3_TEXT);
+            $stmt->bindValue(4, $_POST['ollama_url'], SQLITE3_TEXT);
+            $stmt->bindValue(5, $_POST['ollama_model'], SQLITE3_TEXT);
+            $stmt->bindValue(6, $_POST['ai_prompt'], SQLITE3_TEXT);
+            $stmt->bindValue(7, $_POST['email_recipient'], SQLITE3_TEXT);
+            $stmt->execute();
+            write_log("Neuer Workflow erstellt: " . $_POST['name']);
+        } elseif ($action === 'toggle_workflow') {
+            $workflow_id = (int)$_POST['workflow_id'];
+            $stmt = $db->prepare("UPDATE workflows SET active = NOT active WHERE id = ?");
+            $stmt->bindValue(1, $workflow_id, SQLITE3_INTEGER);
+            $stmt->execute();
+            write_log("Workflow-Status geändert für ID: " . $workflow_id);
+        } elseif ($action === 'delete_workflow') {
+            $workflow_id = (int)$_POST['workflow_id'];
+            $stmt = $db->prepare("DELETE FROM processed_images WHERE workflow_id = ?");
+            $stmt->bindValue(1, $workflow_id, SQLITE3_INTEGER);
+            $stmt->execute();
+            $stmt = $db->prepare("DELETE FROM workflows WHERE id = ?");
+            $stmt->bindValue(1, $workflow_id, SQLITE3_INTEGER);
+            $stmt->execute();
+            write_log("Workflow gelöscht ID: " . $workflow_id);
+        }
+        
+        // Redirect to prevent form resubmission
+        header("Location: ?view=workflows");
+        exit;
+    }
+}
 
 if ($all_files) {
     foreach ($all_files as $file) {
@@ -544,6 +740,219 @@ $calendar_months = generate_calendar($calendar_data);
             transform: scale(1.1);
         }
         
+        .workflow-management {
+            margin-bottom: 40px;
+        }
+        
+        .workflow-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding: 0 20px;
+        }
+        
+        .workflow-header h2 {
+            font-size: 1.8rem;
+            font-weight: 600;
+            color: #1d1d1f;
+            margin: 0;
+        }
+        
+        .btn-primary {
+            background: #007aff;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary:hover {
+            background: #0056b3;
+            transform: translateY(-1px);
+        }
+        
+        .workflows-list {
+            display: grid;
+            gap: 20px;
+        }
+        
+        .workflow-card {
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 16px;
+            padding: 20px;
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            transition: all 0.3s ease;
+        }
+        
+        .workflow-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
+        }
+        
+        .workflow-card.inactive {
+            opacity: 0.6;
+            border-left: 4px solid #ff3b30;
+        }
+        
+        .workflow-card.active {
+            border-left: 4px solid #30d158;
+        }
+        
+        .workflow-info h3 {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #1d1d1f;
+            margin: 0 0 10px 0;
+        }
+        
+        .workflow-details {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        
+        .detail {
+            font-size: 13px;
+            color: #86868b;
+        }
+        
+        .workflow-actions {
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+        }
+        
+        .btn-toggle, .btn-delete {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-toggle {
+            background: #007aff;
+            color: white;
+        }
+        
+        .btn-toggle:hover {
+            background: #0056b3;
+        }
+        
+        .btn-delete {
+            background: #ff3b30;
+            color: white;
+        }
+        
+        .btn-delete:hover {
+            background: #d70015;
+        }
+        
+        .no-workflows {
+            text-align: center;
+            padding: 60px 20px;
+            color: #86868b;
+            font-size: 16px;
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 16px;
+            backdrop-filter: blur(20px);
+        }
+        
+        .workflow-modal {
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            max-width: 600px;
+            width: 90vw;
+        }
+        
+        .workflow-modal h3 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 25px;
+            color: #1d1d1f;
+        }
+        
+        .workflow-form {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        
+        .form-group label {
+            font-size: 14px;
+            font-weight: 500;
+            color: #1d1d1f;
+        }
+        
+        .form-group input, .form-group select, .form-group textarea {
+            padding: 12px 16px;
+            border: 1px solid #d2d2d7;
+            border-radius: 8px;
+            font-size: 14px;
+            background: white;
+            transition: border-color 0.3s ease;
+        }
+        
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+            outline: none;
+            border-color: #007aff;
+        }
+        
+        .form-group textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+        
+        .form-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 15px;
+            margin-top: 10px;
+        }
+        
+        .form-actions button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .form-actions button[type="button"] {
+            background: #f2f2f7;
+            color: #1d1d1f;
+        }
+        
+        .form-actions button[type="button"]:hover {
+            background: #e5e5ea;
+        }
+
         @media (max-width: 768px) {
             .container {
                 padding: 15px;
@@ -564,6 +973,25 @@ $calendar_months = generate_calendar($calendar_data);
             }
             
             .calendar-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .workflow-header {
+                flex-direction: column;
+                gap: 15px;
+                align-items: stretch;
+            }
+            
+            .workflow-card {
+                flex-direction: column;
+                gap: 15px;
+            }
+            
+            .workflow-actions {
+                justify-content: flex-start;
+            }
+            
+            .form-row {
                 grid-template-columns: 1fr;
             }
         }
@@ -587,6 +1015,8 @@ $calendar_months = generate_calendar($calendar_data);
                     onclick="setView('recent')">Last 24 Hours</button>
             <button class="toggle-button <?php echo $view_mode === 'calendar' ? 'active' : ''; ?>" 
                     onclick="setView('calendar')">Calendar View</button>
+            <button class="toggle-button <?php echo $view_mode === 'workflows' ? 'active' : ''; ?>" 
+                    onclick="setView('workflows')">KI Workflows</button>
         </div>
 
         <?php if ($view_mode === 'recent' || $view_mode === 'date'): ?>
@@ -690,6 +1120,123 @@ $calendar_months = generate_calendar($calendar_data);
             ?>
         </div>
         <?php endif; ?>
+
+        <?php if ($view_mode === 'workflows'): ?>
+        <div class="workflow-management">
+            <div class="workflow-header">
+                <h2>KI-Analyse Workflows</h2>
+                <button class="btn-primary" onclick="showCreateWorkflowModal()">Neuen Workflow erstellen</button>
+            </div>
+
+            <div class="workflows-list">
+                <?php
+                $stmt = $db->prepare("SELECT w.*, COUNT(pi.id) as processed_count FROM workflows w LEFT JOIN processed_images pi ON w.id = pi.workflow_id GROUP BY w.id ORDER BY w.created_at DESC");
+                $result = $stmt->execute();
+                
+                if ($result->fetchArray(SQLITE3_NUM)) {
+                    $result->reset();
+                    while ($workflow = $result->fetchArray(SQLITE3_ASSOC)) {
+                        $status_class = $workflow['active'] ? 'active' : 'inactive';
+                        echo '<div class="workflow-card ' . $status_class . '">';
+                        echo '<div class="workflow-info">';
+                        echo '<h3>' . htmlspecialchars($workflow['name']) . '</h3>';
+                        echo '<div class="workflow-details">';
+                        echo '<span class="detail">Modell: ' . htmlspecialchars($workflow['ollama_model']) . '</span>';
+                        echo '<span class="detail">Filter: ';
+                        if (!empty($workflow['filter_esp_id'])) echo 'ESP-ID=' . htmlspecialchars($workflow['filter_esp_id']) . ' ';
+                        if (!empty($workflow['filter_wake_reason'])) echo 'Wake=' . htmlspecialchars($workflow['filter_wake_reason']);
+                        if (empty($workflow['filter_esp_id']) && empty($workflow['filter_wake_reason'])) echo 'Alle Bilder';
+                        echo '</span>';
+                        echo '<span class="detail">E-Mail: ' . htmlspecialchars($workflow['email_recipient']) . '</span>';
+                        echo '<span class="detail">Verarbeitet: ' . $workflow['processed_count'] . ' Bilder</span>';
+                        echo '</div>';
+                        echo '</div>';
+                        echo '<div class="workflow-actions">';
+                        echo '<form method="post" style="display: inline;">';
+                        echo '<input type="hidden" name="action" value="toggle_workflow">';
+                        echo '<input type="hidden" name="workflow_id" value="' . $workflow['id'] . '">';
+                        echo '<button type="submit" class="btn-toggle">' . ($workflow['active'] ? 'Deaktivieren' : 'Aktivieren') . '</button>';
+                        echo '</form>';
+                        echo '<form method="post" style="display: inline;" onsubmit="return confirm(\'Workflow wirklich löschen?\')">';
+                        echo '<input type="hidden" name="action" value="delete_workflow">';
+                        echo '<input type="hidden" name="workflow_id" value="' . $workflow['id'] . '">';
+                        echo '<button type="submit" class="btn-delete">Löschen</button>';
+                        echo '</form>';
+                        echo '</div>';
+                        echo '</div>';
+                    }
+                } else {
+                    echo '<div class="no-workflows">Noch keine Workflows erstellt.</div>';
+                }
+                ?>
+            </div>
+        </div>
+
+        <!-- Create Workflow Modal -->
+        <div id="createWorkflowModal" class="modal" style="display: none;">
+            <div class="modal-content workflow-modal">
+                <button class="close-modal" onclick="hideCreateWorkflowModal()">&times;</button>
+                <h3>Neuen Workflow erstellen</h3>
+                <form method="post" class="workflow-form">
+                    <input type="hidden" name="action" value="create_workflow">
+                    
+                    <div class="form-group">
+                        <label for="name">Workflow-Name:</label>
+                        <input type="text" id="name" name="name" required>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="filter_esp_id">ESP-ID Filter (optional):</label>
+                            <select name="filter_esp_id" id="filter_esp_id">
+                                <option value="">Alle ESP-IDs</option>
+                                <?php foreach ($esp_ids as $id): ?>
+                                    <option value="<?php echo htmlspecialchars($id); ?>"><?php echo htmlspecialchars($id); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="filter_wake_reason">Wake Reason Filter (optional):</label>
+                            <select name="filter_wake_reason" id="filter_wake_reason">
+                                <option value="">Alle Wake Reasons</option>
+                                <?php foreach ($wake_reasons as $reason): ?>
+                                    <option value="<?php echo htmlspecialchars($reason); ?>"><?php echo htmlspecialchars($reason); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="ollama_url">Ollama URL:</label>
+                            <input type="url" id="ollama_url" name="ollama_url" value="http://localhost:11434" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="ollama_model">Modell-Name:</label>
+                            <input type="text" id="ollama_model" name="ollama_model" value="llava" required>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="ai_prompt">KI-Prompt für Bildanalyse:</label>
+                        <textarea id="ai_prompt" name="ai_prompt" rows="4" required placeholder="Beschreibe was du auf diesem Bild siehst. Achte besonders auf Tiere und ihre Aktivitäten."></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="email_recipient">E-Mail-Empfänger:</label>
+                        <input type="email" id="email_recipient" name="email_recipient" required>
+                    </div>
+                    
+                    <div class="form-actions">
+                        <button type="button" onclick="hideCreateWorkflowModal()">Abbrechen</button>
+                        <button type="submit" class="btn-primary">Workflow erstellen</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <?php endif; ?>
     </div>
 
     <script>
@@ -728,6 +1275,22 @@ $calendar_months = generate_calendar($calendar_data);
         function viewDate(date) {
             window.location.href = '?view=date&date=' + date;
         }
+
+        function showCreateWorkflowModal() {
+            document.getElementById('createWorkflowModal').style.display = 'block';
+        }
+
+        function hideCreateWorkflowModal() {
+            document.getElementById('createWorkflowModal').style.display = 'none';
+        }
+
+        // Close workflow modal when clicking outside
+        document.addEventListener('click', function(event) {
+            var workflowModal = document.getElementById('createWorkflowModal');
+            if (event.target === workflowModal) {
+                hideCreateWorkflowModal();
+            }
+        });
     </script>
 </body>
 </html>
