@@ -197,19 +197,23 @@ function send_email($recipient, $subject, $message) {
     }
     
     // SMTP-Response lesen
-    function smtp_read($socket) {
-        $response = '';
-        while ($line = fgets($socket)) {
-            $response .= $line;
-            if (substr($line, 3, 1) == ' ') break;
+    if (!function_exists('smtp_read')) {
+        function smtp_read($socket) {
+            $response = '';
+            while ($line = fgets($socket)) {
+                $response .= $line;
+                if (substr($line, 3, 1) == ' ') break;
+            }
+            return trim($response);
         }
-        return trim($response);
     }
     
     // SMTP-Kommando senden
-    function smtp_send($socket, $command) {
-        fputs($socket, $command . "\r\n");
-        return smtp_read($socket);
+    if (!function_exists('smtp_send')) {
+        function smtp_send($socket, $command) {
+            fputs($socket, $command . "\r\n");
+            return smtp_read($socket);
+        }
     }
     
     try {
@@ -318,7 +322,7 @@ function process_workflows($image_path, $metadata, $db) {
                 );
                 
                 if ($analysis['success']) {
-                    // E-Mail versenden
+                    // E-Mail versenden - mit zusätzlichem Error Handling
                     $subject = "KI-Analyse: " . $workflow['name'] . " - " . $metadata['esp_id'];
                     $email_body = "Bildanalyse von " . basename($image_path) . "\n\n";
                     $email_body .= "ESP-ID: " . $metadata['esp_id'] . "\n";
@@ -326,7 +330,17 @@ function process_workflows($image_path, $metadata, $db) {
                     $email_body .= "Zeitstempel: " . $metadata['timestamp_short'] . "\n\n";
                     $email_body .= "KI-Analyse:\n" . $analysis['result'];
                     
-                    $email_sent = send_email($workflow['email_recipient'], $subject, $email_body);
+                    try {
+                        $email_sent = send_email($workflow['email_recipient'], $subject, $email_body);
+                        if (!$email_sent) {
+                            $error_message = "E-Mail konnte nicht gesendet werden";
+                            write_log("E-Mail-Versand fehlgeschlagen für Workflow '" . $workflow['name'] . "'");
+                        }
+                    } catch (Exception $email_error) {
+                        $error_message = "E-Mail-Fehler: " . $email_error->getMessage();
+                        write_log($error_message);
+                        $email_sent = false;
+                    }
                 } else {
                     $error_message = $analysis['error'];
                     write_log("KI-Analyse fehlgeschlagen für Workflow '" . $workflow['name'] . "': " . $error_message);
@@ -602,6 +616,31 @@ if (isset($_POST['action'])) {
         } else {
             write_log("Versuch ein nicht existierendes Bild zu löschen: " . $image_path);
             $error_msg = "Bild nicht gefunden.";
+        }
+        
+        // Redirect zurück zur aktuellen Ansicht
+        $redirect_url = "?view=" . urlencode($current_view);
+        if (!empty($current_date)) {
+            $redirect_url .= "&date=" . urlencode($current_date);
+        }
+        if (isset($success_msg)) $redirect_url .= "&msg=" . urlencode($success_msg);
+        if (isset($error_msg)) $redirect_url .= "&error=" . urlencode($error_msg);
+        
+        header("Location: " . $redirect_url);
+        exit;
+    }
+    
+    elseif ($action === 'clear_lock') {
+        $current_view = $_POST['current_view'] ?? 'workflows';
+        $current_date = $_POST['current_date'] ?? '';
+        
+        $lock_file = __DIR__ . '/ollama_processing.lock';
+        if (file_exists($lock_file)) {
+            unlink($lock_file);
+            $success_msg = "Ollama-Lock wurde manuell bereinigt.";
+            write_log("Ollama-Lock wurde manuell bereinigt.");
+        } else {
+            $error_msg = "Kein Lock-File gefunden.";
         }
         
         // Redirect zurück zur aktuellen Ansicht
@@ -1637,6 +1676,16 @@ $calendar_months = generate_calendar($calendar_data);
                     <div class="ollama-status <?php echo $status_class; ?>">
                         <span class="status-indicator"></span>
                         <?php echo htmlspecialchars($lock_status['message']); ?>
+                        <?php if ($lock_status['locked']): ?>
+                            <form method="post" style="display:inline; margin-left: 10px;">
+                                <input type="hidden" name="action" value="clear_lock">
+                                <input type="hidden" name="current_view" value="workflows">
+                                <button type="submit" class="btn-secondary" style="font-size: 12px; padding: 4px 8px;" 
+                                        onclick="return confirm('Lock wirklich löschen? Dies kann laufende Verarbeitungen unterbrechen.')">
+                                    Lock löschen
+                                </button>
+                            </form>
+                        <?php endif; ?>
                     </div>
                     <button class="btn-primary" onclick="showCreateWorkflowModal()">Neuen Workflow erstellen</button>
                 </div>
