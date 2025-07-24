@@ -14,6 +14,8 @@ Unterstützt Bildübertragung via HTTP/HTTPS oder ESP-NOW an einen dedizierten E
 - **Einfache Konfiguration**: Zentrale Konfiguration über `config.h` Datei
 - **Display-Unterstützung**: Anzeige empfangener Bilder auf TFT-Displays (ESP-NOW Modus)
 - **Robuste Übertragung**: Chunked ESP-NOW Übertragung für größere Bilder
+- **KI-Bildanalyse**: Automatische Wildtiererkennung und -analyse mit Ollama Vision Models
+- **Intelligente Workflows**: Konfigurierbare KI-Verarbeitung mit E-Mail-Benachrichtigungen
 
 ## Hardware Voraussetzungen
 
@@ -32,6 +34,7 @@ Unterstützt Bildübertragung via HTTP/HTTPS oder ESP-NOW an einen dedizierten E
 
 **Server (optional, bei Verwendung von HTTP Upload):**
 - Webserver mit PHP-Unterstützung oder Docker-Container
+- **Ollama Server** für KI-Bildanalyse (empfohlen: lokal installiert)
 
 ## Installation
 
@@ -72,6 +75,21 @@ Bildergalerie: `http://localhost:8080/upload.php`
 pio run -e espnow_receiver -t upload
 ```
 
+### 5. KI-Bildanalyse Setup (optional)
+**Ollama Installation:**
+```bash
+# Ollama herunterladen und installieren (Linux/Mac)
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Vision Model herunterladen
+ollama pull llava
+
+# Ollama Server starten
+ollama serve
+```
+
+Die KI-Funktionen sind automatisch aktiviert, wenn ein Ollama-Server unter `http://localhost:11434` läuft. Workflows können über das Web-Interface konfiguriert werden.
+
 ## Web-Interface
 
 Die Bildergalerie bietet eine moderne, Apple-inspirierte Benutzeroberfläche mit zwei Ansichtsmodi:
@@ -89,6 +107,7 @@ Die Bildergalerie bietet eine moderne, Apple-inspirierte Benutzeroberfläche mit
 - **Responsive**: Optimiert für Desktop und Mobile
 - **Filter**: Nach Geräte-ID und Aufwachgrund
 - **Modal-Viewer**: Vollbild-Bildanzeige
+- **KI-Integration**: Automatische Bildanalyse und Workflow-Verwaltung
 
 ## Konfiguration
 
@@ -145,6 +164,23 @@ build_flags =
 #define ESP_NOW_RECEIVER_CHANNEL 1  // Muss mit Sender übereinstimmen
 ```
 
+### KI-Workflow-Konfiguration
+
+**Über das Web-Interface:**
+Die KI-Funktionen werden über das Web-Interface konfiguriert (`http://localhost:8080/upload.php`):
+
+1. **Workflow erstellen**: Neue KI-Analyse-Workflows für verschiedene Kameras oder Szenarien
+2. **Filter einstellen**: Nach ESP-Geräte-ID oder Aufwachgrund (PIR, TIMER, POWERON)  
+3. **Prompts anpassen**: Benutzerdefinierte KI-Prompts für spezielle Analyseanforderungen
+4. **E-Mail konfigurieren**: Automatische Benachrichtigungen bei interessanten Entdeckungen
+5. **Modell wählen**: Verschiedene Ollama Vision Models (Standard: llava)
+
+**Beispiel-Workflow:**
+- **Filter**: `esp_id = "CAM_01"` (nur Kamera 1) 
+- **Prompt**: `"Erkenne Wildtiere in diesem Bild. Beschreibe Art, Anzahl und Verhalten detailliert."`
+- **E-Mail**: Benachrichtigung bei Tiersichtungen
+- **Modell**: `llava` (oder andere verfügbare Vision Models)
+
 ## Hardware-Details
 
 ### Sender (ESP32-CAM)
@@ -192,6 +228,71 @@ build_flags =
 - **ESP-NOW Reichweite:** Bis zu 200m (Sichtlinie)
 - **Stromverbrauch:** ~3mA im Deep Sleep (bei 3.3V Direkteinspeisung)
 - **Betriebsspannung:** 3.3V (ESP32-CAM)
+- **KI-Verarbeitung:** Ollama Vision Models (llava, andere)
+- **Automatisierung:** File-based Locking, Concurrent Processing Protection
+
+## KI-Bildanalyse und Wildtiererkennung
+
+EcoSnapCam verfügt über fortschrittliche KI-Funktionen zur automatischen Analyse von Wildkamera-Aufnahmen:
+
+### Kernfunktionen
+
+**Automatische Bildanalyse:**
+- **Ollama Integration**: Nutzt lokale Vision Language Models (LLMs) für Datenschutz
+- **Wildtiererkennung**: Automatische Identifizierung von Tieren, deren Verhalten und Aktivitäten  
+- **Echtzeit-Verarbeitung**: Jedes hochgeladene Bild wird automatisch analysiert
+- **Multi-Model Support**: Unterstützt verschiedene Ollama Vision Models (llava, etc.)
+
+**Intelligente Workflows:**
+- **Filterbare Verarbeitung**: Gezieltes Processing nach ESP-Geräte-ID oder Trigger-Typ (PIR/Timer/PowerOn)
+- **Benutzerdefinierte Prompts**: Anpassbare KI-Analyseanweisungen für verschiedene Szenarien
+- **Automatische E-Mail-Benachrichtigungen**: Sofortige Benachrichtigung bei interessanten Entdeckungen
+- **Datenbankgesteuert**: SQLite-basierte Workflow-Verwaltung mit Web-Interface
+
+### Technische Features
+
+**Ressourcenschutz:**
+- **File-based Locking**: Verhindert Systemüberlastung bei mehreren gleichzeitigen Requests  
+- **Timeout-Management**: 5-Minuten-Timeout mit automatischer Lock-Bereinigung
+- **Concurrent Processing Protection**: Verhindert konkurrierende Ollama-Anfragen
+
+**Datenverarbeitung:**
+- **Metadaten-Extraktion**: Automatische Erfassung von ESP-ID, Aufwachgrund, Timestamp und Batteriestatus
+- **Base64-Bildübertragung**: Effiziente Übertragung an Ollama API
+- **Ergebnisspeicherung**: Vollständige Archivierung aller KI-Analyseergebnisse
+
+### Anwendungsbeispiele
+
+**Wildtiermonitoring:**
+```
+Prompt: "Identifiziere alle Wildtiere in diesem Bild. Beschreibe Art, Anzahl, 
+Verhalten und geschätzte Größe. Achte besonders auf seltene oder ungewöhnliche Arten."
+```
+
+**Verhaltensanalyse:**
+```
+Prompt: "Analysiere das Verhalten der Tiere. Sind sie beim Fressen, Trinken, 
+in der Paarungszeit oder zeigen sie territoriales Verhalten?"
+```
+
+**Habitatbewertung:**
+```
+Prompt: "Beschreibe die Umgebung und beurteile die Habitatqualität. 
+Welche Pflanzen sind sichtbar und wie ist der allgemeine Zustand des Ökosystems?"
+```
+
+### Setup und Konfiguration
+
+Die KI-Features sind **plug-and-play** und werden automatisch aktiviert, wenn:
+1. Ein Ollama-Server auf `http://localhost:11434` läuft
+2. Ein Vision Model (z.B. `llava`) installiert ist  
+3. Workflows über das Web-Interface konfiguriert wurden
+
+**Standard-Konfiguration:**
+- **Model**: `llava` (empfohlen für Wildtiererkennung)
+- **Endpoint**: `http://localhost:11434/api/generate`
+- **Verarbeitung**: Automatisch für alle neuen Uploads
+- **Speicherung**: SQLite-Datenbank im Server-Verzeichnis
 
 ## Stromverbrauch und Hardware-Optimierung
 
@@ -230,6 +331,19 @@ Der optimierte Deep-Sleep-Code erreicht einen Stromverbrauch von ca. **3mA im De
 - Kanal-Einstellungen zwischen Sender und Empfänger prüfen
 - MAC-Adresse des Empfängers korrekt eintragen
 - Entfernung zwischen Geräten reduzieren
+
+**KI-Bildanalyse funktioniert nicht:**
+- Ollama Server Status prüfen: `ollama list` (sollte installierte Models anzeigen)
+- Ollama Service starten: `ollama serve`
+- Vision Model installieren: `ollama pull llava`
+- Web-Interface Workflow-Status überprüfen (zeigt Ollama-Verfügbarkeit)
+- Log-Dateien im Server-Verzeichnis prüfen für detaillierte Fehlermeldungen
+
+**Workflows werden nicht ausgeführt:**
+- Dateinamensformat prüfen (ESP-ID und Wake-Reason müssen extrahierbar sein)
+- Workflow-Filter überprüfen (ESP-ID/Wake-Reason Matching)
+- SQLite-Datenbank-Berechtigungen kontrollieren
+- Ollama Model-Kompatibilität bestätigen (`llava` für Bildanalyse)
 
 ## Lizenz
 

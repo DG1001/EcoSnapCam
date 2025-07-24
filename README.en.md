@@ -14,6 +14,8 @@ Supports image transmission via HTTP/HTTPS or ESP-NOW to a dedicated ESP32 recei
 - **Easy Configuration**: Central configuration via `config.h` file
 - **Display Support**: Display of received images on TFT displays (ESP-NOW mode)
 - **Robust Transmission**: Chunked ESP-NOW transmission for larger images
+- **AI Image Analysis**: Automatic wildlife detection and analysis with Ollama Vision Models
+- **Intelligent Workflows**: Configurable AI processing with email notifications
 
 ## Hardware Prerequisites
 
@@ -32,6 +34,7 @@ Supports image transmission via HTTP/HTTPS or ESP-NOW to a dedicated ESP32 recei
 
 **Server (optional, when using HTTP Upload):**
 - Web server with PHP support or Docker container
+- **Ollama Server** for AI image analysis (recommended: locally installed)
 
 ## Installation
 
@@ -72,6 +75,21 @@ Image gallery: `http://localhost:8080/upload.php`
 pio run -e espnow_receiver -t upload
 ```
 
+### 5. AI Image Analysis Setup (optional)
+**Ollama Installation:**
+```bash
+# Download and install Ollama (Linux/Mac)
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Download vision model
+ollama pull llava
+
+# Start Ollama server
+ollama serve
+```
+
+AI features are automatically activated when an Ollama server is running at `http://localhost:11434`. Workflows can be configured through the web interface.
+
 ## Web Interface
 
 The image gallery features a modern, Apple-inspired user interface with two view modes:
@@ -89,6 +107,7 @@ The image gallery features a modern, Apple-inspired user interface with two view
 - **Responsive**: Optimized for desktop and mobile
 - **Filters**: By device ID and wake reason
 - **Modal Viewer**: Full-screen image display
+- **AI Integration**: Automatic image analysis and workflow management
 
 ## Configuration
 
@@ -145,6 +164,23 @@ build_flags =
 #define ESP_NOW_RECEIVER_CHANNEL 1  // Must match sender
 ```
 
+### AI Workflow Configuration
+
+**Via Web Interface:**
+AI features are configured through the web interface (`http://localhost:8080/upload.php`):
+
+1. **Create Workflows**: New AI analysis workflows for different cameras or scenarios
+2. **Set Filters**: By ESP device ID or wake reason (PIR, TIMER, POWERON)
+3. **Customize Prompts**: User-defined AI prompts for special analysis requirements
+4. **Configure Email**: Automatic notifications for interesting discoveries
+5. **Choose Model**: Different Ollama Vision Models (default: llava)
+
+**Example Workflow:**
+- **Filter**: `esp_id = "CAM_01"` (camera 1 only)
+- **Prompt**: `"Identify wildlife in this image. Describe species, count, and behavior in detail."`
+- **Email**: Notifications for animal sightings
+- **Model**: `llava` (or other available Vision Models)
+
 ## Hardware Details
 
 ### Sender (ESP32-CAM)
@@ -192,6 +228,71 @@ build_flags =
 - **ESP-NOW Range:** Up to 200m (line of sight)
 - **Power Consumption:** ~3mA in Deep Sleep (with 3.3V direct supply)
 - **Operating Voltage:** 3.3V (ESP32-CAM)
+- **AI Processing:** Ollama Vision Models (llava, others)
+- **Automation:** File-based Locking, Concurrent Processing Protection
+
+## AI Image Analysis and Wildlife Detection
+
+EcoSnapCam features advanced AI capabilities for automatic analysis of wildlife camera captures:
+
+### Core Features
+
+**Automatic Image Analysis:**
+- **Ollama Integration**: Uses local Vision Language Models (LLMs) for privacy
+- **Wildlife Detection**: Automatic identification of animals, their behavior and activities
+- **Real-time Processing**: Every uploaded image is automatically analyzed
+- **Multi-Model Support**: Supports various Ollama Vision Models (llava, etc.)
+
+**Intelligent Workflows:**
+- **Filterable Processing**: Targeted processing by ESP device ID or trigger type (PIR/Timer/PowerOn)
+- **Custom Prompts**: Customizable AI analysis instructions for different scenarios
+- **Automatic Email Notifications**: Instant notifications for interesting discoveries
+- **Database-driven**: SQLite-based workflow management with web interface
+
+### Technical Features
+
+**Resource Protection:**
+- **File-based Locking**: Prevents system overload during multiple simultaneous requests
+- **Timeout Management**: 5-minute timeout with automatic lock cleanup
+- **Concurrent Processing Protection**: Prevents competing Ollama requests
+
+**Data Processing:**
+- **Metadata Extraction**: Automatic capture of ESP-ID, wake reason, timestamp and battery status
+- **Base64 Image Transfer**: Efficient transmission to Ollama API
+- **Result Storage**: Complete archiving of all AI analysis results
+
+### Application Examples
+
+**Wildlife Monitoring:**
+```
+Prompt: "Identify all wildlife in this image. Describe species, count, 
+behavior and estimated size. Pay special attention to rare or unusual species."
+```
+
+**Behavior Analysis:**
+```
+Prompt: "Analyze the behavior of the animals. Are they feeding, drinking, 
+in mating season, or showing territorial behavior?"
+```
+
+**Habitat Assessment:**
+```
+Prompt: "Describe the environment and assess habitat quality. 
+What plants are visible and what is the general condition of the ecosystem?"
+```
+
+### Setup and Configuration
+
+AI features are **plug-and-play** and automatically activated when:
+1. An Ollama server is running at `http://localhost:11434`
+2. A Vision Model (e.g. `llava`) is installed
+3. Workflows are configured via the web interface
+
+**Default Configuration:**
+- **Model**: `llava` (recommended for wildlife detection)
+- **Endpoint**: `http://localhost:11434/api/generate`
+- **Processing**: Automatic for all new uploads
+- **Storage**: SQLite database in server directory
 
 ## Power Consumption and Hardware Optimization
 
@@ -230,6 +331,19 @@ The optimized Deep Sleep code achieves a power consumption of approx. **3mA in D
 - Check channel settings between sender and receiver
 - Enter receiver's MAC address correctly
 - Reduce distance between devices
+
+**AI image analysis not working:**
+- Check Ollama server status: `ollama list` (should show installed models)
+- Start Ollama service: `ollama serve`
+- Install vision model: `ollama pull llava`
+- Check web interface workflow status (shows Ollama availability)
+- Check log files in server directory for detailed error messages
+
+**Workflows not executing:**
+- Check filename format (ESP-ID and wake reason must be extractable)
+- Verify workflow filters (ESP-ID/Wake-reason matching)
+- Check SQLite database permissions
+- Confirm Ollama model compatibility (`llava` for image analysis)
 
 ## License
 
